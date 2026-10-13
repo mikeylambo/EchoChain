@@ -1,0 +1,22 @@
+{
+  "name": "echo-chain",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit",
+    "sim": "tsx src/debug/headless.ts",
+    "test": "tsx src/debug/combos.test.ts"
+  },
+  "dependencies": {
+    "@slu/web-shell": "github:mikeylambo/Web-Game-Shell-v1.02"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.0.0"
+  }
+}
