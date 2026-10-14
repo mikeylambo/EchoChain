@@ -9,12 +9,14 @@
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "sim": "tsx src/debug/headless.ts",
-    "test": "tsx src/debug/combos.test.ts"
+    "test": "node --import tsx --test src/debug/combos.test.ts",
+    "combos": "tsx src/debug/combo-report.ts"
   },
   "dependencies": {
-    "@slu/web-shell": "github:mikeylambo/Web-Game-Shell-v1.02"
+    "@slu/web-shell": "file:vendor/web-shell"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "tsx": "^4.19.0",
     "typescript": "^5.8.3",
     "vite": "^6.0.0"
