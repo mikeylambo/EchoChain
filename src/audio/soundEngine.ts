@@ -373,6 +373,28 @@ export class SoundEngine {
     osc.stop(t + 0.05);
   }
 
+  /** Radiant trophy unlock chime arpeggio */
+  achievement(): void {
+    if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
+    const notes = [783.99, 1046.50, 1318.51, 1567.98]; // G5, C6, E6, G6
+    notes.forEach((freq, i) => {
+      setTimeout(() => {
+        if (!this.ctx || !this.masterGain) return;
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.18, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(t);
+        osc.stop(t + 0.45);
+      }, i * 70);
+    });
+  }
+
   /** Victory flourish */
   victory(): void {
     if (!this.ensureContext() || !this.ctx || !this.masterGain) return;

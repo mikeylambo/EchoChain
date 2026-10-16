@@ -25,6 +25,9 @@ import { SoundEngine } from "./audio/soundEngine";
 import { FlowScreens, type ScreenState } from "./ui/screens";
 import { SaveManager } from "./storage/saveData";
 import { GDD_COMBOS } from "./debug/combos";
+import { GamepadManager, type GamepadState } from "./input/gamepad";
+import { AchievementSystem, ACHIEVEMENTS } from "./game/achievements";
+import { PWAController } from "../vendor/web-shell/src/pwa/PWAController";
 
 class EchoChainGame {
   private canvas!: HTMLCanvasElement;
@@ -37,6 +40,9 @@ class EchoChainGame {
   private sound = new SoundEngine();
   private screens = new FlowScreens();
   private saveManager = new SaveManager();
+  private gamepad = new GamepadManager();
+  private achievements = new AchievementSystem();
+  private pwa = new PWAController();
 
   private screen: ScreenState = "title";
   private previousScreen: ScreenState = "title";
@@ -67,9 +73,24 @@ class EchoChainGame {
     this.setupResize();
     this.setupInputs();
 
+    // Attach PWA Controller for offline cache & mobile home screen installation
+    this.pwa.attach(window);
+    this.pwa.register("/sw.js").catch((e) => console.warn("[EchoChain] Service Worker register:", e));
+
     this.screen = "title";
     this.lastTime = performance.now();
     requestAnimationFrame(this.loop.bind(this));
+  }
+
+  private tryUnlockAchievement(id: string): void {
+    const isNew = this.saveManager.unlockAchievement(id);
+    if (isNew) {
+      const def = ACHIEVEMENTS.find((a) => a.id === id);
+      if (def) {
+        this.achievements.queueToast(def);
+        this.sound.achievement();
+      }
+    }
   }
 
   private startExpedition(form: FormId, ascension = 0, mode: "standard" | "endless" = "standard"): void {
@@ -106,6 +127,12 @@ class EchoChainGame {
       this.screen = "victory";
       this.sound.victory();
       this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act, this.run.ascension, this.run.mode);
+      if (this.run.ascension >= 5) {
+        this.tryUnlockAchievement("ascension_5");
+      }
+      if (this.run.mode === "endless" && this.run.endlessDepth >= 10) {
+        this.tryUnlockAchievement("abyssal_walker");
+      }
       return;
     }
     if (this.run.status === "lost") {
@@ -139,6 +166,18 @@ class EchoChainGame {
       applyFight(this.run, node, this.world.stats, this.world.fighter.hp, true, this.world.fighter.x);
       betweenFights(this.run);
 
+      // Achievements checks
+      this.tryUnlockAchievement("first_strike");
+      if (this.world.stats.damageTaken === 0) {
+        this.tryUnlockAchievement("perfect_flow");
+      }
+      if (this.world.boss?.id === "duplicate") {
+        this.tryUnlockAchievement("duplicate_fallen");
+      }
+      if (this.world.boss?.id === "original") {
+        this.tryUnlockAchievement("original_sin");
+      }
+
       // Check discovered combos from current trail
       this.checkDiscoveredCombos();
 
@@ -149,6 +188,12 @@ class EchoChainGame {
         this.screen = "victory";
         this.sound.victory();
         this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act, this.run.ascension, this.run.mode);
+        if (this.run.ascension >= 5) {
+          this.tryUnlockAchievement("ascension_5");
+        }
+        if (this.run.mode === "endless" && this.run.endlessDepth >= 10) {
+          this.tryUnlockAchievement("abyssal_walker");
+        }
       } else {
         this.draftCards = makeDraft(this.run);
         this.isOpeningDraft = false;
@@ -178,6 +223,9 @@ class EchoChainGame {
           );
         }
       }
+    }
+    if (this.saveManager.get().discoveredCombos.length >= GDD_COMBOS.length) {
+      this.tryUnlockAchievement("codex_master");
     }
   }
 
@@ -335,10 +383,140 @@ class EchoChainGame {
       // Cinematic 60ms hitstop on Sync Break activation
       this.hitstop = 0.06;
 
+      this.tryUnlockAchievement("sync_burst");
+
       const shakeMult = this.saveManager.get().settings.screenShake;
       this.vfx.shake(this.arenaRenderer.camera, 14 * shakeMult, 0.4);
       this.vfx.burst(this.world.fighter.x + 30, 50, "#fbbf24", 24, 200);
       this.vfx.addText(this.world.fighter.x + 20, 0, "⚡ SYNC BREAK!", "#fbbf24", 24, true);
+    }
+  }
+
+  private handleGamepadInput(pad: GamepadState): void {
+    if (!pad.connected) return;
+
+    // Global Pause / Menu toggle
+    if (pad.pausePressed) {
+      if (this.screen === "combat") {
+        this.sound.uiClick();
+        this.screen = "pause";
+      } else if (this.screen === "pause") {
+        this.sound.uiClick();
+        this.screen = "combat";
+      } else if (this.screen === "codex") {
+        this.sound.uiClick();
+        this.screen = this.previousScreen;
+      }
+      return;
+    }
+
+    // Cancel / Back Button (B / Circle)
+    if (pad.cancelPressed) {
+      if (this.screen === "codex") {
+        this.sound.uiClick();
+        this.screen = this.previousScreen;
+        return;
+      }
+      if (this.screen === "pause") {
+        this.sound.uiClick();
+        this.screen = "combat";
+        return;
+      }
+      if (this.screen === "draft" && !this.isOpeningDraft) {
+        this.sound.uiClick();
+        this.screen = "organizer";
+        return;
+      }
+    }
+
+    // Codex Shortcut (Y / Triangle or Select)
+    if (pad.codexPressed) {
+      if (this.screen === "title" || this.screen === "combat" || this.screen === "pause") {
+        this.sound.uiClick();
+        this.previousScreen = this.screen;
+        this.screen = "codex";
+        return;
+      }
+    }
+
+    // Screen-specific gamepad interactions
+    if (this.screen === "title") {
+      const forms: FormId[] = ["duelist", "brawler", "phantom"];
+      const saved = this.saveManager.get();
+      const unlocked = forms.filter((f) => saved.unlockedForms.includes(f));
+      const curIdx = unlocked.indexOf(this.screens.selectedForm);
+
+      if (pad.dpadLeft && curIdx > 0) {
+        this.screens.selectedForm = unlocked[curIdx - 1]!;
+        this.sound.uiClick();
+      } else if (pad.dpadRight && curIdx < unlocked.length - 1) {
+        this.screens.selectedForm = unlocked[curIdx + 1]!;
+        this.sound.uiClick();
+      }
+
+      if (pad.dpadUp && this.screens.selectedAscension < saved.highestAscension) {
+        this.screens.selectedAscension++;
+        this.sound.uiClick();
+      } else if (pad.dpadDown && this.screens.selectedAscension > 0) {
+        this.screens.selectedAscension--;
+        this.sound.uiClick();
+      }
+
+      if (pad.primaryPressed) {
+        this.startExpedition(this.screens.selectedForm, this.screens.selectedAscension, this.screens.selectedMode);
+      }
+    } else if (this.screen === "combat") {
+      if (pad.syncPressed) {
+        this.triggerSync();
+      } else if (pad.primaryPressed) {
+        this.handleCombatAction();
+      }
+    } else if (this.screen === "codex") {
+      if (pad.dpadLeft || pad.dpadRight) {
+        this.screens.codexTab = this.screens.codexTab === "combos" ? "achievements" : "combos";
+        this.sound.uiClick();
+      }
+    } else if (this.screen === "organizer") {
+      if (pad.primaryPressed) {
+        this.sound.uiClick();
+        this.checkNextStep();
+      }
+    } else if (this.screen === "draft") {
+      if (pad.primaryPressed && this.draftCards.length > 0) {
+        this.sound.uiClick();
+        applyCard(this.run, this.draftCards[0]!);
+        this.screen = "organizer";
+      }
+    } else if (this.screen === "fork") {
+      const step = currentStep(this.run);
+      if (pad.primaryPressed && step.options.length > 0) {
+        this.sound.uiClick();
+        chooseFork(this.run, 0);
+        const node = step.options[0]!;
+        if (node.type === "forge") this.screen = "forge";
+        else if (node.type === "rest") this.screen = "rest";
+        else this.loadCurrentFight();
+      }
+    } else if (this.screen === "rest") {
+      if (pad.primaryPressed) {
+        this.sound.uiClick();
+        rest(this.run, true);
+        this.run.hp = Math.min(this.run.maxHp, this.run.hp + this.run.maxHp * 0.35);
+        advance(this.run);
+        this.screen = "organizer";
+      }
+    } else if (this.screen === "forge") {
+      if (pad.primaryPressed) {
+        this.sound.uiClick();
+        forge(this.run, 0);
+        advance(this.run);
+        this.screen = "organizer";
+      }
+    } else if (this.screen === "victory" || this.screen === "game_over") {
+      if (pad.primaryPressed) {
+        this.sound.uiClick();
+        this.screen = "title";
+      }
     }
   }
 
@@ -347,6 +525,10 @@ class EchoChainGame {
     this.lastTime = now;
     const w = window.innerWidth;
     const h = window.innerHeight;
+
+    // Gamepad polling
+    const pad = this.gamepad.poll();
+    this.handleGamepadInput(pad);
 
     if (this.screen === "title") {
       const saved = this.saveManager.get();
@@ -360,7 +542,9 @@ class EchoChainGame {
         () => {
           this.previousScreen = "title";
           this.screen = "codex";
-        }
+        },
+        this.gamepad.getPrimaryPrompt(),
+        this.pwa.canInstall ? () => this.pwa.promptInstall() : undefined
       );
     } else if (this.screen === "draft") {
       this.screens.renderDraft(
@@ -448,13 +632,27 @@ class EchoChainGame {
       this.arenaRenderer.update(this.world, elapsed, this.vfx, this.sound);
       this.vfx.update(elapsed, this.arenaRenderer.camera);
 
+      // Check chain length achievements
+      if (this.world.stats.longestChain >= 5) {
+        this.tryUnlockAchievement("chain_5");
+      }
+      if (this.world.stats.longestChain >= 7) {
+        this.tryUnlockAchievement("chain_7");
+      }
+
       // Render world & combat HUD
       this.arenaRenderer.render(this.ctx, this.world, this.vfx, w, h);
-      this.hudRenderer.render(this.ctx, this.world, this.run, w, h);
+      this.hudRenderer.render(this.ctx, this.world, this.run, w, h, {
+        primary: this.gamepad.getPrimaryPrompt(),
+        sync: this.gamepad.getSyncPrompt(),
+      });
     } else if (this.screen === "pause") {
       // Keep rendering frozen combat behind pause modal
       this.arenaRenderer.render(this.ctx, this.world, this.vfx, w, h);
-      this.hudRenderer.render(this.ctx, this.world, this.run, w, h);
+      this.hudRenderer.render(this.ctx, this.world, this.run, w, h, {
+        primary: this.gamepad.getPrimaryPrompt(),
+        sync: this.gamepad.getSyncPrompt(),
+      });
 
       const settings = this.saveManager.get().settings;
       this.screens.renderPause(
@@ -495,10 +693,17 @@ class EchoChainGame {
       );
     } else if (this.screen === "codex") {
       const saved = this.saveManager.get();
-      this.screens.renderCodex(this.ctx, w, h, saved.discoveredCombos, () => {
-        this.sound.uiClick();
-        this.screen = this.previousScreen;
-      });
+      this.screens.renderCodex(
+        this.ctx,
+        w,
+        h,
+        saved.discoveredCombos,
+        saved.unlockedAchievements ?? [],
+        () => {
+          this.sound.uiClick();
+          this.screen = this.previousScreen;
+        }
+      );
     } else if (this.screen === "victory" || this.screen === "game_over") {
       this.screens.renderRunSummary(
         this.ctx,
@@ -512,6 +717,10 @@ class EchoChainGame {
         }
       );
     }
+
+    // Update & render achievement notifications across any screen
+    this.achievements.update(elapsed);
+    this.achievements.render(this.ctx, w);
 
     requestAnimationFrame(this.loop.bind(this));
   }

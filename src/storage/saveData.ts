@@ -11,6 +11,7 @@ export interface SaveData {
   unlockedForms: FormId[];
   highestAscension: number;
   discoveredCombos: string[];
+  unlockedAchievements: string[];
   bestChain: number;
   totalKills: number;
   totalRuns: number;
@@ -24,6 +25,7 @@ const DEFAULT_SAVE: SaveData = {
   unlockedForms: ["duelist"],
   highestAscension: 0,
   discoveredCombos: [],
+  unlockedAchievements: [],
   bestChain: 0,
   totalKills: 0,
   totalRuns: 0,
@@ -86,6 +88,18 @@ export class SaveManager {
   recordCombo(comboName: string): boolean {
     if (!this.data.discoveredCombos.includes(comboName)) {
       this.data.discoveredCombos.push(comboName);
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  unlockAchievement(id: string): boolean {
+    if (!this.data.unlockedAchievements) {
+      this.data.unlockedAchievements = [];
+    }
+    if (!this.data.unlockedAchievements.includes(id)) {
+      this.data.unlockedAchievements.push(id);
       this.save();
       return true;
     }

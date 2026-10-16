@@ -22,7 +22,7 @@ export class HudRenderer {
     pauseBtn: { x: 0, y: 0, w: 0, h: 0 },
   };
 
-  render(ctx: CanvasRenderingContext2D, world: World, run: RunState, width: number, height: number): void {
+  render(ctx: CanvasRenderingContext2D, world: World, run: RunState, width: number, height: number, prompts?: { primary: string; sync: string }): void {
     // 1. Top HUD Bar (Health, Act, Timer, Kills, Boss Bar)
     this.renderTopBar(ctx, world, run, width);
 
@@ -30,11 +30,11 @@ export class HudRenderer {
     this.renderChainTrail(ctx, world, run, width, height);
 
     // 3. Sync Break Meter & Touch Controls
-    this.renderBottomControls(ctx, world, width, height);
+    this.renderBottomControls(ctx, world, width, height, prompts);
 
     // 4. Outcome Banner (Victory / Defeat)
     if (world.outcome !== "running") {
-      this.renderOutcomeOverlay(ctx, world, width, height);
+      this.renderOutcomeOverlay(ctx, world, width, height, prompts);
     }
   }
 
@@ -295,7 +295,7 @@ export class HudRenderer {
     ctx.restore();
   }
 
-  private renderBottomControls(ctx: CanvasRenderingContext2D, world: World, width: number, height: number): void {
+  private renderBottomControls(ctx: CanvasRenderingContext2D, world: World, width: number, height: number, prompts?: { primary: string; sync: string }): void {
     const isReady = world.chargeFull;
     const chargeRatio = Math.max(0, Math.min(1, world.charge / TUNING.syncChargeMax));
 
@@ -347,7 +347,8 @@ export class HudRenderer {
     ctx.font = `bold ${isReady ? 12 : 11}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const label = isReady ? "⚡ SYNC BREAK READY [SPACE / TAP]" : `SYNC CHARGE ${Math.round(world.charge)} / ${TUNING.syncChargeMax}`;
+    const syncPrompt = prompts?.sync ?? "[SPACE / TAP]";
+    const label = isReady ? `⚡ SYNC BREAK READY ${syncPrompt}` : `SYNC CHARGE ${Math.round(world.charge)} / ${TUNING.syncChargeMax}`;
     ctx.fillText(label, meterX + meterW / 2, meterY + meterH / 2);
 
     // Save touch boundaries for tap handling
@@ -379,7 +380,7 @@ export class HudRenderer {
     ctx.restore();
   }
 
-  private renderOutcomeOverlay(ctx: CanvasRenderingContext2D, world: World, width: number, height: number): void {
+  private renderOutcomeOverlay(ctx: CanvasRenderingContext2D, world: World, width: number, height: number, prompts?: { primary: string; sync: string }): void {
     const isWon = world.outcome === "won";
     ctx.save();
 
@@ -424,10 +425,11 @@ export class HudRenderer {
     ctx.roundRect(btnX, btnY, btnW, btnH, 8);
     ctx.fill();
 
+    const primaryPrompt = prompts?.primary ?? "[SPACE]";
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 13px system-ui, sans-serif";
     ctx.textBaseline = "middle";
-    ctx.fillText(isWon ? "NEXT FIGHT [SPACE]" : "RETRY RUN [SPACE]", width / 2, btnY + btnH / 2);
+    ctx.fillText(isWon ? `NEXT FIGHT ${primaryPrompt}` : `RETRY RUN ${primaryPrompt}`, width / 2, btnY + btnH / 2);
 
     this.touchControls.nextBtn = { x: btnX, y: btnY, w: btnW, h: btnH };
 

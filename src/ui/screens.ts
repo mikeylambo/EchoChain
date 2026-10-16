@@ -7,6 +7,7 @@ import { THEME, familyColor } from "../render/types";
 import { GDD_COMBOS } from "../debug/combos";
 import type { GameSettings } from "../storage/saveData";
 import { ASCENSIONS } from "../data/bosses";
+import { ACHIEVEMENTS, type AchievementDef } from "../game/achievements";
 
 export type ScreenState =
   | "title"
@@ -35,6 +36,7 @@ export class FlowScreens {
   selectedForm: FormId = "duelist";
   selectedMode: "standard" | "endless" = "standard";
   selectedAscension = 0;
+  codexTab: "combos" | "achievements" = "combos";
 
   resetZones(): void {
     this.clickZones = [];
@@ -60,7 +62,9 @@ export class FlowScreens {
     unlockedForms: FormId[],
     highestAscension: number,
     onStart: (form: FormId, ascension: number, mode: "standard" | "endless") => void,
-    onOpenCodex?: () => void
+    onOpenCodex?: () => void,
+    primaryPrompt = "[SPACE]",
+    onInstallApp?: () => void
   ): void {
     this.resetZones();
     ctx.save();
@@ -98,6 +102,37 @@ export class FlowScreens {
     ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
     ctx.font = "13px system-ui, sans-serif";
     ctx.fillText("A KINETIC ROGUE-LITE", width / 2, height * 0.15);
+
+    // Install Button in top right (if PWA installable)
+    if (onInstallApp) {
+      const installBtnW = 110;
+      const installBtnH = 32;
+      const installBtnX = width - (onOpenCodex ? 140 : 20) - installBtnW - 10;
+      const installBtnY = 20;
+
+      this.clickZones.push({
+        id: "title-install",
+        x: installBtnX,
+        y: installBtnY,
+        w: installBtnW,
+        h: installBtnH,
+        action: onInstallApp,
+      });
+
+      ctx.fillStyle = "rgba(16, 185, 129, 0.25)";
+      ctx.strokeStyle = THEME.healthGreen;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(installBtnX, installBtnY, installBtnW, installBtnH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = THEME.healthGreen;
+      ctx.font = "bold 11px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("📲 INSTALL", installBtnX + installBtnW / 2, installBtnY + installBtnH / 2);
+    }
 
     // Codex Button in top right
     if (onOpenCodex) {
@@ -411,7 +446,7 @@ export class FlowScreens {
     ctx.font = "bold 15px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const startText = this.selectedMode === "endless" ? "ENTER THE ABYSS [SPACE]" : "BEGIN EXPEDITION [SPACE]";
+    const startText = this.selectedMode === "endless" ? `ENTER THE ABYSS ${primaryPrompt}` : `BEGIN EXPEDITION ${primaryPrompt}`;
     ctx.fillText(startText, btnX + btnW / 2, btnY + btnH / 2);
 
     ctx.restore();
@@ -1366,6 +1401,7 @@ export class FlowScreens {
     width: number,
     height: number,
     discoveredCombos: string[],
+    unlockedAchievements: string[],
     onClose: () => void
   ): void {
     this.resetZones();
@@ -1378,11 +1414,7 @@ export class FlowScreens {
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 24px system-ui, sans-serif";
-    ctx.fillText("COMBO CODEX & COMPENDIUM", width / 2, 42);
-
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText("Master the four legendary chain sequences and the authoritative techniques", width / 2, 64);
+    ctx.fillText("COMBO CODEX & ARCHIVES", width / 2, 38);
 
     // Close Button top-right
     const closeBtnW = 100;
@@ -1408,92 +1440,188 @@ export class FlowScreens {
     ctx.textBaseline = "middle";
     ctx.fillText("CLOSE [ESC]", closeBtnX + closeBtnW / 2, closeBtnY + closeBtnH / 2);
 
-    // Section 1: The 4 Legendary Combos
-    ctx.textAlign = "left";
-    ctx.fillStyle = THEME.precision;
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.fillText("LEGENDARY SYNERGY SEQUENCES (GDD §6)", 30, 100);
+    // Two Tabs: COMBOS & TECHNIQUES vs TROPHIES & ACHIEVEMENTS
+    const tabW = 210;
+    const tabH = 30;
+    const tabY = 56;
+    const tab1X = width / 2 - tabW - 8;
+    const tab2X = width / 2 + 8;
 
-    const comboCardW = Math.min(260, (width - 80) / 2);
-    const comboCardH = 92;
-    const startY = 114;
+    this.clickZones.push({
+      id: "codex-tab-combos",
+      x: tab1X,
+      y: tabY,
+      w: tabW,
+      h: tabH,
+      action: () => { this.codexTab = "combos"; },
+    });
+    const isCombos = this.codexTab === "combos";
+    ctx.fillStyle = isCombos ? "rgba(59, 130, 246, 0.3)" : "rgba(15, 23, 42, 0.7)";
+    ctx.strokeStyle = isCombos ? THEME.flow : "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = isCombos ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(tab1X, tabY, tabW, tabH, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = `bold ${isCombos ? "12px" : "11px"} system-ui, sans-serif`;
+    ctx.fillStyle = isCombos ? "#ffffff" : "#94a3b8";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("📖 COMBOS & TECHNIQUES", tab1X + tabW / 2, tabY + tabH / 2);
 
-    GDD_COMBOS.forEach((spec, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const x = 30 + col * (comboCardW + 20);
-      const y = startY + row * (comboCardH + 12);
+    this.clickZones.push({
+      id: "codex-tab-achievements",
+      x: tab2X,
+      y: tabY,
+      w: tabW,
+      h: tabH,
+      action: () => { this.codexTab = "achievements"; },
+    });
+    const isAchievements = this.codexTab === "achievements";
+    ctx.fillStyle = isAchievements ? "rgba(245, 158, 11, 0.3)" : "rgba(15, 23, 42, 0.7)";
+    ctx.strokeStyle = isAchievements ? "#fbbf24" : "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = isAchievements ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(tab2X, tabY, tabW, tabH, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = `bold ${isAchievements ? "12px" : "11px"} system-ui, sans-serif`;
+    ctx.fillStyle = isAchievements ? "#ffffff" : "#94a3b8";
+    ctx.fillText(`🏆 TROPHIES (${unlockedAchievements.length} / ${ACHIEVEMENTS.length})`, tab2X + tabW / 2, tabY + tabH / 2);
 
-      const isDiscovered = discoveredCombos.includes(spec.name);
-
-      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-      ctx.strokeStyle = isDiscovered ? THEME.precision : "rgba(255, 255, 255, 0.15)";
-      ctx.lineWidth = isDiscovered ? 1.5 : 1;
-      ctx.beginPath();
-      ctx.roundRect(x, y, comboCardW, comboCardH, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      // Combo Name & Badge
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(spec.name.toUpperCase(), x + 12, y + 22);
-
-      ctx.textAlign = "right";
-      ctx.font = "bold 10px monospace";
-      ctx.fillStyle = isDiscovered ? THEME.healthGreen : "#64748b";
-      ctx.fillText(isDiscovered ? "✓ DISCOVERED" : "🔒 LOCKED", x + comboCardW - 12, y + 22);
-
-      // Sequence Trail
+    if (this.codexTab === "combos") {
+      // Section 1: The 4 Legendary Combos
       ctx.textAlign = "left";
-      ctx.font = "bold 11px monospace";
+      ctx.fillStyle = THEME.precision;
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillText("LEGENDARY SYNERGY SEQUENCES (GDD §6)", 30, 110);
+
+      const comboCardW = Math.min(260, (width - 80) / 2);
+      const comboCardH = 92;
+      const startY = 124;
+
+      GDD_COMBOS.forEach((spec, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = 30 + col * (comboCardW + 20);
+        const y = startY + row * (comboCardH + 12);
+
+        const isDiscovered = discoveredCombos.includes(spec.name);
+
+        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+        ctx.strokeStyle = isDiscovered ? THEME.precision : "rgba(255, 255, 255, 0.15)";
+        ctx.lineWidth = isDiscovered ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.roundRect(x, y, comboCardW, comboCardH, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        // Combo Name & Badge
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(spec.name.toUpperCase(), x + 12, y + 22);
+
+        ctx.textAlign = "right";
+        ctx.font = "bold 10px monospace";
+        ctx.fillStyle = isDiscovered ? THEME.healthGreen : "#64748b";
+        ctx.fillText(isDiscovered ? "✓ DISCOVERED" : "🔒 LOCKED", x + comboCardW - 12, y + 22);
+
+        // Sequence Trail
+        ctx.textAlign = "left";
+        ctx.font = "bold 11px monospace";
+        ctx.fillStyle = THEME.flow;
+        ctx.fillText(spec.trail.join(" ➔ "), x + 12, y + 44);
+
+        // Claim Description
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillStyle = "#cbd5e1";
+        this.renderWrappedText(ctx, spec.claim, x + 12, y + 62, comboCardW - 24, 13);
+      });
+
+      // Section 2: Technique Compendium Grid
+      const techStartY = startY + 2 * (comboCardH + 12) + 20;
+      ctx.textAlign = "left";
       ctx.fillStyle = THEME.flow;
-      ctx.fillText(spec.trail.join(" ➔ "), x + 12, y + 44);
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillText("AUTHORITATIVE TECHNIQUE ARCHETYPES", 30, techStartY);
 
-      // Claim Description
-      ctx.font = "10px system-ui, sans-serif";
-      ctx.fillStyle = "#cbd5e1";
-      this.renderWrappedText(ctx, spec.claim, x + 12, y + 62, comboCardW - 24, 13);
-    });
+      const techCardW = Math.min(180, (width - 70) / 4);
+      const techCardH = 72;
+      const gridStartY = techStartY + 14;
 
-    // Section 2: Technique Compendium Grid
-    const techStartY = startY + 2 * (comboCardH + 12) + 24;
-    ctx.textAlign = "left";
-    ctx.fillStyle = THEME.flow;
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.fillText("AUTHORITATIVE TECHNIQUE ARCHETYPES", 30, techStartY);
+      TECHNIQUES.slice(0, 8).forEach((tech, i) => {
+        const col = i % 4;
+        const row = Math.floor(i / 4);
+        const x = 30 + col * (techCardW + 10);
+        const y = gridStartY + row * (techCardH + 10);
+        const color = familyColor(tech.family);
 
-    const techCardW = Math.min(180, (width - 70) / 4);
-    const techCardH = 72;
-    const gridStartY = techStartY + 14;
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(x, y, techCardW, techCardH, 6);
+        ctx.fill();
+        ctx.stroke();
 
-    TECHNIQUES.slice(0, 8).forEach((tech, i) => {
-      const col = i % 4;
-      const row = Math.floor(i / 4);
-      const x = 30 + col * (techCardW + 10);
-      const y = gridStartY + row * (techCardH + 10);
-      const color = familyColor(tech.family);
+        ctx.font = "bold 12px system-ui, sans-serif";
+        ctx.fillStyle = color;
+        ctx.fillText(tech.name, x + 10, y + 20);
 
-      ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(x, y, techCardW, techCardH, 6);
-      ctx.fill();
-      ctx.stroke();
+        ctx.font = "9px monospace";
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText(`IN: ${tech.receives.join(",")} ➜ OUT: ${tech.emits.join(",")}`, x + 10, y + 36);
 
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.fillStyle = color;
-      ctx.fillText(tech.name, x + 10, y + 20);
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillStyle = "#cbd5e1";
+        this.renderWrappedText(ctx, tech.desc, x + 10, y + 52, techCardW - 20, 12);
+      });
+    } else {
+      // ACHIEVEMENTS TAB
+      const achCardW = Math.min(360, (width - 60) / 2);
+      const achCardH = 68;
+      const startY = 114;
 
-      ctx.font = "9px monospace";
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillText(`IN: ${tech.receives.join(",")} ➜ OUT: ${tech.emits.join(",")}`, x + 10, y + 36);
+      ACHIEVEMENTS.forEach((ach, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = (width - (achCardW * 2 + 20)) / 2 + col * (achCardW + 20);
+        const y = startY + row * (achCardH + 12);
+        const isUnlocked = unlockedAchievements.includes(ach.id);
 
-      ctx.font = "10px system-ui, sans-serif";
-      ctx.fillStyle = "#cbd5e1";
-      this.renderWrappedText(ctx, tech.desc, x + 10, y + 52, techCardW - 20, 12);
-    });
+        ctx.fillStyle = isUnlocked ? "rgba(15, 23, 42, 0.9)" : "rgba(15, 23, 42, 0.55)";
+        ctx.strokeStyle = isUnlocked ? "#fbbf24" : "rgba(255, 255, 255, 0.1)";
+        ctx.lineWidth = isUnlocked ? 1.5 : 1;
+        ctx.beginPath();
+        ctx.roundRect(x, y, achCardW, achCardH, 8);
+        ctx.fill();
+        ctx.stroke();
+
+        // Icon
+        ctx.font = "24px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(isUnlocked ? ach.icon : "🔒", x + 30, y + achCardH / 2);
+
+        // Title
+        ctx.textAlign = "left";
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.fillStyle = isUnlocked ? "#ffffff" : "#64748b";
+        ctx.fillText(ach.title, x + 58, y + 22);
+
+        // Status badge
+        ctx.textAlign = "right";
+        ctx.font = "bold 10px monospace";
+        ctx.fillStyle = isUnlocked ? THEME.healthGreen : "#ef4444";
+        ctx.fillText(isUnlocked ? "✓ UNLOCKED" : "LOCKED", x + achCardW - 14, y + 22);
+
+        // Description
+        ctx.textAlign = "left";
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.fillStyle = isUnlocked ? "#cbd5e1" : "#64748b";
+        ctx.fillText(ach.desc, x + 58, y + 46);
+      });
+    }
 
     ctx.restore();
   }
