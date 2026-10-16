@@ -1,0 +1,906 @@
+import { FORMS, FORM_LIST, type FormId } from "../data/forms";
+import { SEAL } from "../data/seals";
+import { TECH } from "../data/techniques";
+import { analyzeTrail, type LinkInfo } from "../sim/links";
+import type { DraftCard, MapNode, RunState } from "../sim/run";
+import { THEME, familyColor } from "../render/types";
+
+export type ScreenState = "title" | "combat" | "draft" | "organizer" | "fork" | "forge" | "rest" | "victory" | "game_over";
+
+export interface ClickZone {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  action: () => void;
+}
+
+export class FlowScreens {
+  clickZones: ClickZone[] = [];
+  selectedForm: FormId = "duelist";
+
+  resetZones(): void {
+    this.clickZones = [];
+  }
+
+  handlePointerDown(x: number, y: number): boolean {
+    for (const z of this.clickZones) {
+      if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) {
+        z.action();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 1. TITLE SCREEN & FORM SELECTION
+  // ─────────────────────────────────────────────────────────────
+  renderTitle(ctx: CanvasRenderingContext2D, width: number, height: number, onStart: (form: FormId) => void): void {
+    this.resetZones();
+    ctx.save();
+
+    // Dark ink backdrop with subtle center bloom
+    ctx.fillStyle = THEME.bgDark;
+    ctx.fillRect(0, 0, width, height);
+
+    const grad = ctx.createRadialGradient(width / 2, height / 2, 50, width / 2, height / 2, width * 0.6);
+    grad.addColorStop(0, "rgba(30, 41, 59, 0.4)");
+    grad.addColorStop(1, "rgba(9, 10, 15, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Title
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 44px system-ui, sans-serif";
+    ctx.shadowColor = "rgba(255, 255, 255, 0.35)";
+    ctx.shadowBlur = 16;
+    ctx.fillText("ECHO CHAIN", width / 2, height * 0.18);
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+    ctx.font = "14px system-ui, sans-serif";
+    ctx.fillText("A KINETIC ROGUE-LITE", width / 2, height * 0.23);
+
+    // Prompt
+    ctx.fillStyle = "#e2e8f0";
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.fillText("SELECT YOUR COMBAT FORM", width / 2, height * 0.32);
+
+    // 3 Form Cards
+    const cardW = Math.min(220, (width - 60) / 3);
+    const cardH = 210;
+    const spacing = 16;
+    const totalW = 3 * cardW + 2 * spacing;
+    const startX = (width - totalW) / 2;
+    const startY = height * 0.38;
+
+    FORM_LIST.forEach((formId, i) => {
+      const def = FORMS[formId];
+      const isSelected = this.selectedForm === formId;
+      const x = startX + i * (cardW + spacing);
+      const y = startY;
+
+      // Register click zone
+      this.clickZones.push({
+        id: `form-${formId}`,
+        x,
+        y,
+        w: cardW,
+        h: cardH,
+        action: () => { this.selectedForm = formId; },
+      });
+
+      // Card Background
+      ctx.fillStyle = isSelected ? "rgba(30, 41, 59, 0.95)" : "rgba(15, 23, 42, 0.8)";
+      ctx.strokeStyle = isSelected ? THEME.precision : "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = isSelected ? 2.5 : 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, cardW, cardH, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      // Card Title
+      ctx.textAlign = "center";
+      ctx.font = "bold 18px system-ui, sans-serif";
+      ctx.fillStyle = isSelected ? THEME.precision : "#ffffff";
+      ctx.fillText(def.name.toUpperCase(), x + cardW / 2, y + 36);
+
+      // Description
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillText(def.desc, x + cardW / 2, y + 62);
+
+      // Stats
+      ctx.font = "11px monospace";
+      ctx.fillStyle = "#cbd5e1";
+      ctx.fillText(`HP: ${def.hp}`, x + cardW / 2, y + 100);
+      ctx.fillText(`Interval: ${def.interval}s`, x + cardW / 2, y + 122);
+      ctx.fillText(`Crit Rate: ${Math.round(def.crit * 100)}%`, x + cardW / 2, y + 144);
+      ctx.fillText(`Echo Slots: ${def.startSlots}`, x + cardW / 2, y + 166);
+
+      // Selected Tag
+      if (isSelected) {
+        ctx.fillStyle = THEME.precision;
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.fillText("✓ SELECTED", x + cardW / 2, y + 192);
+      }
+    });
+
+    // Start Button
+    const btnW = 260;
+    const btnH = 46;
+    const btnX = (width - btnW) / 2;
+    const btnY = height * 0.78;
+
+    this.clickZones.push({
+      id: "start-game",
+      x: btnX,
+      y: btnY,
+      w: btnW,
+      h: btnH,
+      action: () => onStart(this.selectedForm),
+    });
+
+    ctx.fillStyle = THEME.precision;
+    ctx.beginPath();
+    ctx.roundRect(btnX, btnY, btnW, btnH, 8);
+    ctx.fill();
+
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 15px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("BEGIN RUN [SPACE / TAP]", btnX + btnW / 2, btnY + btnH / 2);
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 2. DRAFT SCREEN (TECHNIQUES / UPGRADES / RELICS)
+  // ─────────────────────────────────────────────────────────────
+  renderDraft(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    cards: DraftCard[],
+    run: RunState,
+    onPick: (card: DraftCard) => void,
+    onSkip?: () => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    // Dark backdrop
+    ctx.fillStyle = "rgba(4, 7, 13, 0.9)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillText("WEAVE INTO YOUR TRAIL", width / 2, height * 0.16);
+
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Choose an Echo technique, Rank enhancement, or Relic Seal", width / 2, height * 0.21);
+
+    // Cards
+    const cardW = Math.min(240, (width - 60) / Math.max(1, cards.length));
+    const cardH = 280;
+    const spacing = 20;
+    const totalW = cards.length * cardW + (cards.length - 1) * spacing;
+    const startX = (width - totalW) / 2;
+    const startY = height * 0.28;
+
+    const trailInfo = analyzeTrail(run.trail, run.form);
+    const lastEmits = trailInfo.emits[trailInfo.emits.length - 1] ?? [];
+
+    cards.forEach((card, i) => {
+      const x = startX + i * (cardW + spacing);
+      const y = startY;
+
+      this.clickZones.push({
+        id: `card-${i}`,
+        x,
+        y,
+        w: cardW,
+        h: cardH,
+        action: () => onPick(card),
+      });
+
+      let title = "";
+      let subtitle = "";
+      let desc = "";
+      let color = THEME.flow;
+      let connects = false;
+
+      if (card.kind === "echo") {
+        const t = TECH[card.tech];
+        if (t) {
+          title = t.name;
+          subtitle = `${t.family.toUpperCase()} • ECHO`;
+          desc = t.desc;
+          color = familyColor(t.family);
+          connects = t.receives.includes("ANY") || lastEmits.some((e) => t.receives.includes(e));
+        }
+      } else if (card.kind === "rank") {
+        const t = TECH[card.tech];
+        if (t) {
+          title = `${t.name} (RANK UP)`;
+          subtitle = "TECHNIQUE MASTERY";
+          desc = `Upgrades to next tier: ${t.rank3}`;
+          color = THEME.precision;
+        }
+      } else {
+        const s = SEAL[card.seal];
+        if (s) {
+          title = `${s.glyph} ${s.name}`;
+          subtitle = "RELIC SEAL";
+          desc = s.desc;
+          color = THEME.resonance;
+        }
+      }
+
+      // Card Container
+      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x, y, cardW, cardH, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      // Card Header Banner
+      ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
+      ctx.beginPath();
+      ctx.roundRect(x, y, cardW, 56, [10, 10, 0, 0]);
+      ctx.fill();
+
+      // Card Subtitle
+      ctx.font = "bold 10px system-ui, sans-serif";
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.fillText(subtitle, x + cardW / 2, y + 22);
+
+      // Card Title
+      ctx.font = "bold 16px system-ui, sans-serif";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(title, x + cardW / 2, y + 42);
+
+      // Description text (wrapped)
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillStyle = "#cbd5e1";
+      this.renderWrappedText(ctx, desc, x + 16, y + 90, cardW - 32, 18);
+
+      // Synergy Indicator
+      if (card.kind === "echo" && connects) {
+        ctx.fillStyle = "rgba(16, 185, 129, 0.2)";
+        ctx.strokeStyle = THEME.healthGreen;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(x + 14, y + cardH - 80, cardW - 28, 26, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = THEME.healthGreen;
+        ctx.font = "bold 10px system-ui, sans-serif";
+        ctx.fillText("✓ CONNECTS WITH TRAIL", x + cardW / 2, y + cardH - 63);
+      }
+
+      // Choose Button
+      const btnW = cardW - 32;
+      const btnH = 36;
+      const btnX = x + 16;
+      const btnY = y + cardH - 46;
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(btnX, btnY, btnW, btnH, 6);
+      ctx.fill();
+
+      ctx.fillStyle = "#000000";
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText("SELECT", btnX + btnW / 2, btnY + btnH / 2);
+    });
+
+    // Skip Button
+    if (onSkip) {
+      const skipW = 140;
+      const skipH = 34;
+      const skipX = (width - skipW) / 2;
+      const skipY = height * 0.85;
+
+      this.clickZones.push({
+        id: "skip-draft",
+        x: skipX,
+        y: skipY,
+        w: skipW,
+        h: skipH,
+        action: onSkip,
+      });
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(skipX, skipY, skipW, skipH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.fillText("SKIP DRAFT", skipX + skipW / 2, skipY + skipH / 2);
+    }
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 3. TRAIL ORGANIZER (REORDERING & LINK CAUSALITY)
+  // ─────────────────────────────────────────────────────────────
+  renderOrganizer(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    run: RunState,
+    onMove: (fromIndex: number, toIndex: number) => void,
+    onContinue: () => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    // Dark backdrop
+    ctx.fillStyle = "rgba(7, 10, 16, 0.94)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 24px system-ui, sans-serif";
+    ctx.fillText("TRAIL CAUSALITY ENGINE", width / 2, height * 0.12);
+
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Events flow downstream (0 → 1 → 2 ...). Reorder echoes to maximize connected links.", width / 2, height * 0.16);
+
+    // Link analysis
+    const linkInfo = analyzeTrail(run.trail, run.form);
+
+    // Link Health Pill
+    const pillW = 320;
+    const pillH = 30;
+    const pillX = (width - pillW) / 2;
+    const pillY = height * 0.20;
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.strokeStyle = linkInfo.longest === run.trail.length && run.trail.length > 0 ? THEME.healthGreen : THEME.precision;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(pillX, pillY, pillW, pillH, 15);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`CHAIN POTENTIAL: ${linkInfo.count} / ${run.trail.length} LINKS CONNECTED (MAX ${linkInfo.longest + 1})`, pillX + pillW / 2, pillY + pillH / 2);
+
+    // Slots Display: Slot 0 (Fighter) + Echoes
+    const totalSlots = run.trail.length + 1;
+    const slotW = Math.min(130, (width - 40) / Math.max(3, totalSlots));
+    const slotH = 170;
+    const spacing = 16;
+    const totalW = totalSlots * slotW + (totalSlots - 1) * spacing;
+    const startX = (width - totalW) / 2;
+    const startY = height * 0.32;
+
+    for (let slot = 0; slot < totalSlots; slot++) {
+      const x = startX + slot * (slotW + spacing);
+      const y = startY;
+      const isFighter = slot === 0;
+
+      let name = isFighter ? FORMS[run.form].name : "";
+      let family = "precision";
+      let rankText = "";
+      let desc = "";
+
+      if (isFighter) {
+        desc = `Emits: ${linkInfo.emits[0]?.join(", ")}`;
+      } else {
+        const item = run.trail[slot - 1]!;
+        const t = TECH[item.tech];
+        if (t) {
+          name = t.name;
+          family = t.family;
+          rankText = `RANK ${item.rank}`;
+          desc = t.desc;
+        }
+      }
+
+      const isLinked = isFighter || linkInfo.links[slot] === true;
+      const color = isFighter ? THEME.fighter : familyColor(family);
+
+      // Slot Box
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.strokeStyle = isLinked ? color : "rgba(239, 68, 68, 0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x, y, slotW, slotH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Top Tag
+      ctx.fillStyle = color;
+      ctx.font = "bold 10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(isFighter ? "SLOT 0: FIGHTER" : `SLOT ${slot}`, x + slotW / 2, y + 20);
+
+      // Name
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillText(name, x + slotW / 2, y + 42);
+
+      // Rank
+      if (rankText) {
+        ctx.fillStyle = THEME.precision;
+        ctx.font = "bold 9px monospace";
+        ctx.fillText(rankText, x + slotW / 2, y + 58);
+      }
+
+      // Link status pill
+      if (!isFighter) {
+        ctx.fillStyle = isLinked ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)";
+        ctx.strokeStyle = isLinked ? THEME.healthGreen : THEME.healthRed;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(x + 10, y + 74, slotW - 20, 20, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = isLinked ? THEME.healthGreen : THEME.healthRed;
+        ctx.font = "bold 9px system-ui, sans-serif";
+        ctx.fillText(isLinked ? "✓ LINKED" : "✗ UNLINKED", x + slotW / 2, y + 84);
+      }
+
+      // Description
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "10px system-ui, sans-serif";
+      this.renderWrappedText(ctx, desc, x + 8, y + 104, slotW - 16, 13);
+
+      // Reorder buttons for Echoes
+      if (!isFighter) {
+        const echoIdx = slot - 1;
+        const btnY = y + slotH - 32;
+
+        // Move Left
+        if (echoIdx > 0) {
+          const lX = x + 8;
+          this.clickZones.push({
+            id: `move-left-${echoIdx}`,
+            x: lX,
+            y: btnY,
+            w: 36,
+            h: 24,
+            action: () => onMove(echoIdx, echoIdx - 1),
+          });
+
+          ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+          ctx.beginPath();
+          ctx.roundRect(lX, btnY, 36, 24, 4);
+          ctx.fill();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 12px system-ui, sans-serif";
+          ctx.fillText("◀", lX + 18, btnY + 12);
+        }
+
+        // Move Right
+        if (echoIdx < run.trail.length - 1) {
+          const rX = x + slotW - 44;
+          this.clickZones.push({
+            id: `move-right-${echoIdx}`,
+            x: rX,
+            y: btnY,
+            w: 36,
+            h: 24,
+            action: () => onMove(echoIdx, echoIdx + 1),
+          });
+
+          ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+          ctx.beginPath();
+          ctx.roundRect(rX, btnY, 36, 24, 4);
+          ctx.fill();
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 12px system-ui, sans-serif";
+          ctx.fillText("▶", rX + 18, btnY + 12);
+        }
+      }
+
+      // Arrow connecting to next slot
+      if (slot < totalSlots - 1) {
+        const nextLinked = linkInfo.links[slot + 1] === true;
+        const arrowX0 = x + slotW + 2;
+        const arrowX1 = arrowX0 + spacing - 4;
+        const arrowY = y + slotH / 2;
+
+        ctx.strokeStyle = nextLinked ? THEME.healthGreen : "rgba(239, 68, 68, 0.4)";
+        ctx.lineWidth = nextLinked ? 2 : 1;
+        ctx.beginPath();
+        ctx.moveTo(arrowX0, arrowY);
+        ctx.lineTo(arrowX1, arrowY);
+        ctx.lineTo(arrowX1 - 4, arrowY - 4);
+        ctx.moveTo(arrowX1, arrowY);
+        ctx.lineTo(arrowX1 - 4, arrowY + 4);
+        ctx.stroke();
+      }
+    }
+
+    // Continue / Start Encounter Button
+    const contW = 260;
+    const contH = 46;
+    const contX = (width - contW) / 2;
+    const contY = height * 0.78;
+
+    this.clickZones.push({
+      id: "organizer-continue",
+      x: contX,
+      y: contY,
+      w: contW,
+      h: contH,
+      action: onContinue,
+    });
+
+    ctx.fillStyle = THEME.precision;
+    ctx.beginPath();
+    ctx.roundRect(contX, contY, contW, contH, 8);
+    ctx.fill();
+
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 14px system-ui, sans-serif";
+    ctx.fillText("COMMENCE ENCOUNTER [SPACE / TAP]", contX + contW / 2, contY + contH / 2);
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 4. MAP FORK SELECTION SCREEN
+  // ─────────────────────────────────────────────────────────────
+  renderFork(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    options: MapNode[],
+    onPick: (index: number) => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    ctx.fillStyle = "rgba(4, 7, 13, 0.92)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillText("CHOOSE YOUR PATH", width / 2, height * 0.22);
+
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Select which encounter or sanctuary to march toward", width / 2, height * 0.28);
+
+    const cardW = Math.min(260, (width - 60) / options.length);
+    const cardH = 220;
+    const spacing = 30;
+    const totalW = options.length * cardW + (options.length - 1) * spacing;
+    const startX = (width - totalW) / 2;
+    const startY = height * 0.36;
+
+    options.forEach((opt, i) => {
+      const x = startX + i * (cardW + spacing);
+      const y = startY;
+
+      this.clickZones.push({
+        id: `fork-${i}`,
+        x,
+        y,
+        w: cardW,
+        h: cardH,
+        action: () => onPick(i),
+      });
+
+      let title = opt.type.toUpperCase();
+      let color = THEME.flow;
+      let desc = "Standard encounter";
+
+      if (opt.type === "fight") {
+        title = `${opt.family?.toUpperCase() ?? "ENEMY"} SQUAD`;
+        color = THEME.flow;
+        desc = "Standard combat encounter. Grants Echo Draft.";
+      } else if (opt.type === "elite") {
+        title = "ELITE VANGUARD";
+        color = THEME.enemyElite;
+        desc = "Dangerous commander. Grants Echo Draft & Slot milestone.";
+      } else if (opt.type === "boss") {
+        title = "ACT BOSS";
+        color = THEME.enemyBoss;
+        desc = "Formidable apex entity. Proof of mastery required.";
+      } else if (opt.type === "forge") {
+        title = "ECHO FORGE";
+        color = THEME.precision;
+        desc = "Sanctuary. Temper an existing Echo to Rank II or III.";
+      } else if (opt.type === "rest") {
+        title = "REST SITE";
+        color = THEME.healthGreen;
+        desc = "Sanctuary. Recover 35% Max HP or meditate.";
+      }
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x, y, cardW, cardH, 10);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "bold 18px system-ui, sans-serif";
+      ctx.fillStyle = color;
+      ctx.fillText(title, x + cardW / 2, y + 46);
+
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillStyle = "#cbd5e1";
+      this.renderWrappedText(ctx, desc, x + 20, y + 80, cardW - 40, 18);
+
+      const btnW = cardW - 40;
+      const btnH = 40;
+      const btnX = x + 20;
+      const btnY = y + cardH - 56;
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(btnX, btnY, btnW, btnH, 6);
+      ctx.fill();
+
+      ctx.fillStyle = "#000000";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText("ADVANCE", btnX + btnW / 2, btnY + btnH / 2);
+    });
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 5. REST SITE SCREEN
+  // ─────────────────────────────────────────────────────────────
+  renderRest(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    run: RunState,
+    onRestChoice: (heal: boolean) => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    ctx.fillStyle = "rgba(4, 7, 13, 0.92)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillText("REST SITE", width / 2, height * 0.22);
+
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText(`Current Health: ${Math.round(run.hp)} / ${run.maxHp} HP`, width / 2, height * 0.28);
+
+    const cardW = 240;
+    const cardH = 200;
+    const spacing = 30;
+    const startX = (width - (cardW * 2 + spacing)) / 2;
+    const startY = height * 0.36;
+
+    // Option 1: Rest & Heal
+    const healX = startX;
+    this.clickZones.push({
+      id: "rest-heal",
+      x: healX,
+      y: startY,
+      w: cardW,
+      h: cardH,
+      action: () => onRestChoice(true),
+    });
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+    ctx.strokeStyle = THEME.healthGreen;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(healX, startY, cardW, cardH, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = "bold 18px system-ui, sans-serif";
+    ctx.fillStyle = THEME.healthGreen;
+    ctx.fillText("REST & RECOVER", healX + cardW / 2, startY + 44);
+
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillText(`Heal 35% of max HP (+${Math.round(run.maxHp * 0.35)} HP)`, healX + cardW / 2, startY + 85);
+
+    ctx.fillStyle = THEME.healthGreen;
+    ctx.beginPath();
+    ctx.roundRect(healX + 20, startY + cardH - 54, cardW - 40, 36, 6);
+    ctx.fill();
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 12px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("REST", healX + cardW / 2, startY + cardH - 36);
+
+    // Option 2: Meditate
+    const medX = startX + cardW + spacing;
+    this.clickZones.push({
+      id: "rest-meditate",
+      x: medX,
+      y: startY,
+      w: cardW,
+      h: cardH,
+      action: () => onRestChoice(false),
+    });
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+    ctx.strokeStyle = THEME.precision;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(medX, startY, cardW, cardH, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font = "bold 18px system-ui, sans-serif";
+    ctx.fillStyle = THEME.precision;
+    ctx.fillText("MEDITATE", medX + cardW / 2, startY + 44);
+
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillText("Focus kinetic spirit and march forward refreshed.", medX + cardW / 2, startY + 85);
+
+    ctx.fillStyle = THEME.precision;
+    ctx.beginPath();
+    ctx.roundRect(medX + 20, startY + cardH - 54, cardW - 40, 36, 6);
+    ctx.fill();
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 12px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("MEDITATE", medX + cardW / 2, startY + cardH - 36);
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 6. FORGE SCREEN
+  // ─────────────────────────────────────────────────────────────
+  renderForge(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    run: RunState,
+    onForgeSlot: (slot: number) => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    ctx.fillStyle = "rgba(4, 7, 13, 0.92)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 26px system-ui, sans-serif";
+    ctx.fillText("ECHO FORGE", width / 2, height * 0.20);
+
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Select an equipped Echo to elevate its rank.", width / 2, height * 0.25);
+
+    const slotW = Math.min(180, (width - 60) / Math.max(1, run.trail.length));
+    const slotH = 200;
+    const spacing = 16;
+    const totalW = run.trail.length * slotW + (run.trail.length - 1) * spacing;
+    const startX = (width - totalW) / 2;
+    const startY = height * 0.35;
+
+    run.trail.forEach((item, slot) => {
+      const x = startX + slot * (slotW + spacing);
+      const y = startY;
+      const t = TECH[item.tech];
+      const color = t ? familyColor(t.family) : THEME.flow;
+      const canUpgrade = item.rank < 3;
+
+      if (canUpgrade) {
+        this.clickZones.push({
+          id: `forge-slot-${slot}`,
+          x,
+          y,
+          w: slotW,
+          h: slotH,
+          action: () => onForgeSlot(slot),
+        });
+      }
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+      ctx.strokeStyle = canUpgrade ? color : "rgba(255, 255, 255, 0.2)";
+      ctx.lineWidth = canUpgrade ? 2 : 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, slotW, slotH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "bold 14px system-ui, sans-serif";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(t?.name ?? item.tech, x + slotW / 2, y + 36);
+
+      ctx.font = "bold 11px monospace";
+      ctx.fillStyle = THEME.precision;
+      ctx.fillText(`CURRENT: RANK ${item.rank}`, x + slotW / 2, y + 62);
+
+      if (canUpgrade) {
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.fillStyle = THEME.healthGreen;
+        ctx.fillText(`➜ UPGRADE TO RANK ${item.rank + 1}`, x + slotW / 2, y + 88);
+
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillStyle = "#94a3b8";
+        this.renderWrappedText(ctx, t?.rank3 ?? "", x + 12, y + 112, slotW - 24, 13);
+
+        const btnW = slotW - 24;
+        const btnH = 34;
+        const btnX = x + 12;
+        const btnY = y + slotH - 44;
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(btnX, btnY, btnW, btnH, 6);
+        ctx.fill();
+
+        ctx.fillStyle = "#000000";
+        ctx.font = "bold 12px system-ui, sans-serif";
+        ctx.textBaseline = "middle";
+        ctx.fillText("FORGE", btnX + btnW / 2, btnY + btnH / 2);
+      } else {
+        ctx.font = "bold 12px system-ui, sans-serif";
+        ctx.fillStyle = "#64748b";
+        ctx.fillText("MAX RANK", x + slotW / 2, y + 110);
+      }
+    });
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // TEXT WRAPPING HELPER
+  // ─────────────────────────────────────────────────────────────
+  private renderWrappedText(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    maxWidth: number,
+    lineHeight: number
+  ): void {
+    const words = text.split(" ");
+    let line = "";
+    let curY = y;
+
+    for (let n = 0; n < words.length; n++) {
+      const testLine = line + words[n] + " ";
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && n > 0) {
+        ctx.fillText(line, x + maxWidth / 2, curY);
+        line = words[n] + " ";
+        curY += lineHeight;
+      } else {
+        line = testLine;
+      }
+    }
+    ctx.fillText(line, x + maxWidth / 2, curY);
+  }
+}

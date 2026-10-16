@@ -5,6 +5,7 @@ import { TUNING } from "../data/tuning";
 import type { Camera } from "./types";
 import { THEME, familyColor } from "./types";
 import type { VfxEngine } from "./vfx";
+import type { SoundEngine } from "../audio/soundEngine";
 
 const TECH_MAP = new Map<string, TechniqueDef>(TECHNIQUES.map((t) => [t.id, t]));
 
@@ -22,21 +23,21 @@ export class ArenaRenderer {
   private prevFighterX = 0;
   private lastObservedOutcome: "running" | "won" | "lost" = "running";
 
-  update(world: World, dt: number, vfx: VfxEngine): void {
+  update(world: World, dt: number, vfx: VfxEngine, audio?: SoundEngine): void {
     // Smooth camera track on fighter with forward anticipation
     const targetLead = 180;
     this.camera.targetX = world.fighter.x + targetLead;
     this.camera.x += (this.camera.targetX - this.camera.x) * Math.min(1, dt * 5);
     this.camera.y = 0;
 
-    // Detect new sim events for visual triggers
-    this.processSimEvents(world, vfx);
+    // Detect new sim events for visual triggers and audio playback
+    this.processSimEvents(world, vfx, audio);
 
     this.prevFighterX = world.fighter.x;
     this.lastObservedOutcome = world.outcome;
   }
 
-  private processSimEvents(world: World, vfx: VfxEngine): void {
+  private processSimEvents(world: World, vfx: VfxEngine, audio?: SoundEngine): void {
     // Process sim fx queue
     while (world.fx.length > 0) {
       const fx = world.fx.shift()!;
@@ -46,20 +47,31 @@ export class ArenaRenderer {
             vfx.burst(fx.x, this.groundY - 30, THEME.precision, 16, 160);
             vfx.shake(this.camera, 6, 0.2);
             vfx.addText(fx.x, this.groundY - 60, `CRIT ${Math.round(fx.dmg)}`, THEME.precision, 20, true);
+            audio?.hit(true);
           } else {
             vfx.burst(fx.x, this.groundY - 30, THEME.fighter, 8, 90);
             vfx.addText(fx.x, this.groundY - 50, `${Math.round(fx.dmg)}`, "#ffffff", 14);
+            audio?.hit(false);
           }
           break;
         case "parry":
           vfx.burst(fx.x, this.groundY - 35, THEME.flow, 18, 140);
           vfx.shake(this.camera, 8, 0.25);
           vfx.addText(fx.x, this.groundY - 60, "PARRY", THEME.flow, 18, true);
+          audio?.parry();
           break;
         case "slam":
         case "launch":
           vfx.burst(fx.x, this.groundY - 30, THEME.momentum, 14, 130);
           vfx.addText(fx.x, this.groundY - 55, fx.k.toUpperCase(), THEME.momentum, 16);
+          audio?.stagger();
+          break;
+        case "note":
+        case "chain":
+          audio?.chainLink(fx.links);
+          break;
+        case "sync":
+          audio?.syncBreak();
           break;
         case "heal":
           vfx.addText(world.fighter.x, this.groundY - 70, `+${Math.round(fx.amount)}`, THEME.healthGreen, 16);
@@ -68,6 +80,7 @@ export class ArenaRenderer {
         case "clang":
           vfx.burst(fx.x, this.groundY - 40, "#94a3b8", 12, 110);
           vfx.addText(fx.x, this.groundY - 60, "GUARDED", "#94a3b8", 14);
+          audio?.hit(false);
           break;
         case "boss":
           vfx.shake(this.camera, 12, 0.4);
