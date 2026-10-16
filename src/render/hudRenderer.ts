@@ -10,6 +10,7 @@ export interface HudTouchControls {
   strikeBtn: { x: number; y: number; w: number; h: number };
   syncBtn: { x: number; y: number; w: number; h: number };
   nextBtn: { x: number; y: number; w: number; h: number };
+  pauseBtn: { x: number; y: number; w: number; h: number };
 }
 
 export class HudRenderer {
@@ -17,6 +18,7 @@ export class HudRenderer {
     strikeBtn: { x: 0, y: 0, w: 0, h: 0 },
     syncBtn: { x: 0, y: 0, w: 0, h: 0 },
     nextBtn: { x: 0, y: 0, w: 0, h: 0 },
+    pauseBtn: { x: 0, y: 0, w: 0, h: 0 },
   };
 
   render(ctx: CanvasRenderingContext2D, world: World, run: RunState, width: number, height: number): void {
@@ -91,13 +93,35 @@ export class HudRenderer {
     const durationS = (world.stats.durationMs / 1000).toFixed(1);
     ctx.fillText(`${durationS}s  •  Form: ${world.form.name}`, width / 2, topY + 24);
 
+    // Pause button in top right
+    const pauseW = 32;
+    const pauseH = 32;
+    const pauseX = width - pad - pauseW;
+    const pauseY = topY - 4;
+    this.touchControls.pauseBtn = { x: pauseX, y: pauseY, w: pauseW, h: pauseH };
+
+    ctx.fillStyle = "rgba(30, 41, 59, 0.85)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(pauseX, pauseY, pauseW, pauseH, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("⏸", pauseX + pauseW / 2, pauseY + pauseH / 2);
+
     // Stats (Right): Kills & Longest Chain
+    const statsRight = pauseX - 14;
     ctx.textAlign = "right";
     ctx.font = "bold 12px system-ui, sans-serif";
     ctx.fillStyle = THEME.precision;
-    ctx.fillText(`KILLS: ${world.stats.kills}`, width - pad, topY + 6);
+    ctx.fillText(`KILLS: ${world.stats.kills}`, statsRight, topY + 6);
     ctx.fillStyle = THEME.flow;
-    ctx.fillText(`BEST CHAIN: ${world.stats.longestChain}`, width - pad, topY + 24);
+    ctx.fillText(`BEST CHAIN: ${world.stats.longestChain}`, statsRight, topY + 24);
 
     ctx.restore();
   }

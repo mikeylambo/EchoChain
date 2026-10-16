@@ -1,11 +1,19 @@
 /**
  * Procedural Web Audio Engine for Echo Chain.
- * Generates all SFX procedurally in real-time without external audio files.
+ * Generates all SFX and atmospheric ambient drone procedurally in real-time.
  */
 export class SoundEngine {
   private ctx: AudioContext | null = null;
   private muted = false;
+  private volume = 0.7;
   private masterGain: GainNode | null = null;
+
+  // Ambient drone nodes
+  private droneGain: GainNode | null = null;
+  private droneOsc1: OscillatorNode | null = null;
+  private droneOsc2: OscillatorNode | null = null;
+  private droneFilter: BiquadFilterNode | null = null;
+  private droneRunning = false;
 
   // Pentatonic scale frequencies for ascending chain harmonics (C5, D5, E5, G5, A5, C6, D6, E6)
   private readonly chainScale = [
@@ -25,11 +33,42 @@ export class SoundEngine {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.35, this.ctx.currentTime);
+      this.updateMasterGain();
       this.masterGain.connect(this.ctx.destination);
     } catch (e) {
       console.warn("Web Audio API not supported", e);
     }
+  }
+
+  private updateMasterGain(): void {
+    if (this.masterGain && this.ctx) {
+      const gainVal = this.muted ? 0 : this.volume * 0.45;
+      this.masterGain.gain.setValueAtTime(gainVal, this.ctx.currentTime);
+    }
+  }
+
+  setVolume(vol: number): void {
+    this.volume = Math.max(0, Math.min(1, vol));
+    this.updateMasterGain();
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    this.updateMasterGain();
+  }
+
+  toggleMute(): boolean {
+    this.muted = !this.muted;
+    this.updateMasterGain();
+    return this.muted;
+  }
+
+  get isMuted(): boolean {
+    return this.muted;
+  }
+
+  get currentVolume(): number {
+    return this.volume;
   }
 
   private ensureContext(): boolean {
@@ -40,17 +79,75 @@ export class SoundEngine {
     return !!this.ctx && !this.muted;
   }
 
-  toggleMute(): boolean {
-    this.muted = !this.muted;
-    if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setValueAtTime(this.muted ? 0 : 0.35, this.ctx.currentTime);
+  // ─────────────────────────────────────────────────────────────
+  // ATMOSPHERIC AMBIENT DRONE
+  // ─────────────────────────────────────────────────────────────
+  startAmbientDrone(): void {
+    if (!this.ensureContext() || !this.ctx || !this.masterGain || this.droneRunning) return;
+    try {
+      const t = this.ctx.currentTime;
+      this.droneGain = this.ctx.createGain();
+      this.droneGain.gain.setValueAtTime(0.001, t);
+      this.droneGain.gain.exponentialRampToValueAtTime(0.12, t + 2.0);
+
+      this.droneFilter = this.ctx.createBiquadFilter();
+      this.droneFilter.type = "lowpass";
+      this.droneFilter.frequency.setValueAtTime(160, t);
+
+      // Low frequency drone oscillator 1 (55Hz = A1)
+      this.droneOsc1 = this.ctx.createOscillator();
+      this.droneOsc1.type = "sawtooth";
+      this.droneOsc1.frequency.setValueAtTime(55, t);
+
+      // Detuned oscillator 2 (55.4Hz) creates subtle binaural beating
+      this.droneOsc2 = this.ctx.createOscillator();
+      this.droneOsc2.type = "sine";
+      this.droneOsc2.frequency.setValueAtTime(55.5, t);
+
+      this.droneOsc1.connect(this.droneFilter);
+      this.droneOsc2.connect(this.droneFilter);
+      this.droneFilter.connect(this.droneGain);
+      this.droneGain.connect(this.masterGain);
+
+      this.droneOsc1.start(t);
+      this.droneOsc2.start(t);
+      this.droneRunning = true;
+    } catch (e) {
+      console.warn("Could not start ambient drone:", e);
     }
-    return this.muted;
   }
 
-  get isMuted(): boolean {
-    return this.muted;
+  stopAmbientDrone(): void {
+    if (!this.droneRunning || !this.ctx || !this.droneGain) return;
+    const t = this.ctx.currentTime;
+    this.droneGain.gain.setValueAtTime(this.droneGain.gain.value, t);
+    this.droneGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+    setTimeout(() => {
+      try {
+        this.droneOsc1?.stop();
+        this.droneOsc2?.stop();
+        this.droneOsc1?.disconnect();
+        this.droneOsc2?.disconnect();
+      } catch {}
+      this.droneRunning = false;
+    }, 850);
   }
+
+  setBossIntensity(isBoss: boolean): void {
+    if (!this.droneRunning || !this.ctx || !this.droneFilter || !this.droneGain) return;
+    const t = this.ctx.currentTime;
+    if (isBoss) {
+      this.droneFilter.frequency.linearRampToValueAtTime(280, t + 1.0);
+      this.droneGain.gain.linearRampToValueAtTime(0.18, t + 1.0);
+    } else {
+      this.droneFilter.frequency.linearRampToValueAtTime(160, t + 1.0);
+      this.droneGain.gain.linearRampToValueAtTime(0.12, t + 1.0);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // COMBAT SFX
+  // ─────────────────────────────────────────────────────────────
 
   /** Fighter ink slash whoosh */
   slash(): void {
@@ -85,7 +182,6 @@ export class SoundEngine {
     if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
     const t = this.ctx.currentTime;
 
-    // Body thump
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
 
@@ -102,7 +198,6 @@ export class SoundEngine {
     osc.start(t);
     osc.stop(t + (crit ? 0.22 : 0.12));
 
-    // High snap on crit
     if (crit) {
       const snap = this.ctx.createOscillator();
       const snapGain = this.ctx.createGain();
@@ -145,6 +240,28 @@ export class SoundEngine {
     }
   }
 
+  /** Enemy windup warning / telegraph cue */
+  telegraph(): void {
+    if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
+    const t = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(320, t);
+    osc.frequency.linearRampToValueAtTime(540, t + 0.08);
+
+    gain.gain.setValueAtTime(0.12, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+
+    osc.start(t);
+    osc.stop(t + 0.08);
+  }
+
   /** Shatter crunch on enemy stagger */
   stagger(): void {
     if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
@@ -169,7 +286,6 @@ export class SoundEngine {
 
   /**
    * Ascending pentatonic bell chime as chain propagates down the echoes!
-   * Link 1 = C5, Link 2 = D5, Link 3 = E5, etc.
    */
   chainLink(linkIndex: number): void {
     if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
@@ -184,7 +300,6 @@ export class SoundEngine {
     osc.type = "sine";
     osc.frequency.setValueAtTime(freq, t);
 
-    // Dynamic presence based on chain depth
     const vol = Math.min(0.35, 0.15 + linkIndex * 0.03);
     gain.gain.setValueAtTime(vol, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
@@ -201,7 +316,6 @@ export class SoundEngine {
     if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
     const t = this.ctx.currentTime;
 
-    // Harmonic power chord: C4, G4, C5, E5
     const chord = [261.63, 392.00, 523.25, 659.25];
     for (const f of chord) {
       const osc = this.ctx.createOscillator();
@@ -221,7 +335,6 @@ export class SoundEngine {
       osc.stop(t + 0.55);
     }
 
-    // Low sub rumble
     const sub = this.ctx.createOscillator();
     const subGain = this.ctx.createGain();
     sub.type = "sine";

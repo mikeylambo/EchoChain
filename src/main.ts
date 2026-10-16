@@ -23,6 +23,8 @@ import { HudRenderer } from "./render/hudRenderer";
 import { VfxEngine } from "./render/vfx";
 import { SoundEngine } from "./audio/soundEngine";
 import { FlowScreens, type ScreenState } from "./ui/screens";
+import { SaveManager } from "./storage/saveData";
+import { GDD_COMBOS } from "./debug/combos";
 
 class EchoChainGame {
   private canvas!: HTMLCanvasElement;
@@ -34,12 +36,16 @@ class EchoChainGame {
   private vfx = new VfxEngine();
   private sound = new SoundEngine();
   private screens = new FlowScreens();
+  private saveManager = new SaveManager();
 
   private screen: ScreenState = "title";
+  private previousScreen: ScreenState = "title";
   private draftCards: DraftCard[] = [];
   private isOpeningDraft = false;
   private victorySoundPlayed = false;
 
+  // Kinetic juice & hitstop
+  private hitstop = 0; // seconds
   private lastTime = 0;
   private accumulator = 0;
   private readonly fixedDt = 1 / 60; // 60Hz authoritative sim tick
@@ -52,6 +58,11 @@ class EchoChainGame {
     const context = canvasEl.getContext("2d");
     if (!context) throw new Error("Canvas 2D unavailable");
     this.ctx = context;
+
+    // Apply saved settings
+    const settings = this.saveManager.get().settings;
+    this.sound.setVolume(settings.volume);
+    this.sound.setMuted(settings.muted);
 
     this.setupResize();
     this.setupInputs();
@@ -66,9 +77,10 @@ class EchoChainGame {
     this.sound.uiClick();
 
     const seed = `run-${Date.now().toString(36)}`;
-    this.run = newRun(seed, form, 0, "standard", [...STARTER_TECHS]);
+    const saved = this.saveManager.get();
+    this.run = newRun(seed, form, saved.highestAscension, "standard", [...STARTER_TECHS]);
 
-    // Provide opening draft of 3 starter echoes that link to the fighter's form
+    // Opening draft
     this.draftCards = makeOpeningDraft(this.run);
     this.isOpeningDraft = true;
     this.screen = "draft";
@@ -80,23 +92,32 @@ class EchoChainGame {
     this.world = new World(fightConfig(this.run, node));
     this.queuedCommands = [];
     this.victorySoundPlayed = false;
+    this.hitstop = 0;
+
+    // Ambient audio
+    this.sound.startAmbientDrone();
+    this.sound.setBossIntensity(!!this.world.boss);
+
     this.screen = "combat";
   }
 
   private checkNextStep(): void {
     if (this.run.status === "won") {
+      this.sound.stopAmbientDrone();
       this.screen = "victory";
       this.sound.victory();
+      this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act);
       return;
     }
     if (this.run.status === "lost") {
+      this.sound.stopAmbientDrone();
       this.screen = "game_over";
+      this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, false, this.run.act);
       return;
     }
 
     const step = currentStep(this.run);
 
-    // If step has multiple choices, show fork selection screen
     if (step.chosen < 0 && step.options.length > 1) {
       this.screen = "fork";
       return;
@@ -118,19 +139,46 @@ class EchoChainGame {
       const node = step.options[Math.max(0, step.chosen)]!;
       applyFight(this.run, node, this.world.stats, this.world.fighter.hp, true, this.world.fighter.x);
       betweenFights(this.run);
+
+      // Check discovered combos from current trail
+      this.checkDiscoveredCombos();
+
       advance(this.run);
 
       if (this.run.status === "won") {
+        this.sound.stopAmbientDrone();
         this.screen = "victory";
         this.sound.victory();
+        this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act);
       } else {
-        // Offer draft cards between fights
         this.draftCards = makeDraft(this.run);
         this.isOpeningDraft = false;
         this.screen = "draft";
       }
     } else if (this.world.outcome === "lost") {
+      this.sound.stopAmbientDrone();
+      this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act);
       this.screen = "title";
+    }
+  }
+
+  private checkDiscoveredCombos(): void {
+    const currentTrailIds = this.run.trail.map((s) => s.tech).join(" ");
+    for (const combo of GDD_COMBOS) {
+      const comboStr = combo.trail.join(" ");
+      if (currentTrailIds.includes(comboStr)) {
+        const isNew = this.saveManager.recordCombo(combo.name);
+        if (isNew) {
+          this.vfx.addText(
+            this.world.fighter.x,
+            -20,
+            `✦ DISCOVERED: ${combo.name.toUpperCase()}!`,
+            "#fbbf24",
+            22,
+            true
+          );
+        }
+      }
     }
   }
 
@@ -156,7 +204,17 @@ class EchoChainGame {
     window.addEventListener("keydown", (e) => {
       this.sound.init();
 
-      if (e.code === "Space") {
+      if (e.code === "Escape") {
+        e.preventDefault();
+        if (this.screen === "combat") {
+          this.previousScreen = "combat";
+          this.screen = "pause";
+        } else if (this.screen === "pause") {
+          this.screen = "combat";
+        } else if (this.screen === "codex") {
+          this.screen = this.previousScreen;
+        }
+      } else if (e.code === "Space") {
         e.preventDefault();
         this.handleSpaceKey();
       } else if (e.code === "KeyS" || e.code === "Enter" || e.code === "KeyK") {
@@ -164,9 +222,11 @@ class EchoChainGame {
         if (this.screen === "combat") this.triggerSync();
       } else if (e.code === "KeyM") {
         e.preventDefault();
-        this.sound.toggleMute();
+        const muted = this.sound.toggleMute();
+        this.saveManager.updateSettings({ muted });
       } else if (e.code === "KeyR") {
         e.preventDefault();
+        this.sound.stopAmbientDrone();
         this.screen = "title";
       }
     });
@@ -179,16 +239,26 @@ class EchoChainGame {
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      // First check screen UI interactive zones
+      // In non-combat screens: check interactive UI zones
       if (this.screen !== "combat") {
         const handled = this.screens.handlePointerDown(x, y);
         if (handled) return;
       }
 
-      // In combat: check HUD buttons or arena tap
+      // In combat screen: check HUD pause, sync, next, or arena tap
       if (this.screen === "combat") {
         const controls = this.hudRenderer.touchControls;
 
+        // Check Pause button
+        const pause = controls.pauseBtn;
+        if (x >= pause.x && x <= pause.x + pause.w && y >= pause.y && y <= pause.y + pause.h) {
+          this.sound.uiClick();
+          this.previousScreen = "combat";
+          this.screen = "pause";
+          return;
+        }
+
+        // Check Next Encounter button
         if (this.world.outcome !== "running") {
           const btn = controls.nextBtn;
           if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
@@ -198,6 +268,7 @@ class EchoChainGame {
           }
         }
 
+        // Check Sync Break button
         const sync = controls.syncBtn;
         if (x >= sync.x && x <= sync.x + sync.w && y >= sync.y && y <= sync.y + sync.h) {
           this.triggerSync();
@@ -233,9 +304,14 @@ class EchoChainGame {
     if (this.world.chargeFull) {
       this.triggerSync();
     } else {
-      this.world.fighterStrike(false);
+      const evs = this.world.fighterStrike(false);
       this.sound.slash();
       this.vfx.addSlash(this.world.fighter.x + 24, 50, 30);
+
+      // Hitstop micro-pause on crit (45ms)
+      if (evs.some((ev) => ev.type === "CRIT")) {
+        this.hitstop = 0.045;
+      }
     }
   }
 
@@ -243,7 +319,12 @@ class EchoChainGame {
     if (this.world.outcome === "running") {
       this.queuedCommands.push({ type: "sync" });
       this.sound.syncBreak();
-      this.vfx.shake(this.arenaRenderer.camera, 14, 0.4);
+
+      // Cinematic 60ms hitstop on Sync Break activation
+      this.hitstop = 0.06;
+
+      const shakeMult = this.saveManager.get().settings.screenShake;
+      this.vfx.shake(this.arenaRenderer.camera, 14 * shakeMult, 0.4);
       this.vfx.burst(this.world.fighter.x + 30, 50, "#fbbf24", 24, 200);
       this.vfx.addText(this.world.fighter.x + 20, 0, "⚡ SYNC BREAK!", "#fbbf24", 24, true);
     }
@@ -256,7 +337,16 @@ class EchoChainGame {
     const h = window.innerHeight;
 
     if (this.screen === "title") {
-      this.screens.renderTitle(this.ctx, w, h, (form) => this.startExpedition(form));
+      this.screens.renderTitle(
+        this.ctx,
+        w,
+        h,
+        (form) => this.startExpedition(form),
+        () => {
+          this.previousScreen = "title";
+          this.screen = "codex";
+        }
+      );
     } else if (this.screen === "draft") {
       this.screens.renderDraft(
         this.ctx,
@@ -318,14 +408,19 @@ class EchoChainGame {
         this.screen = "organizer";
       });
     } else if (this.screen === "combat") {
-      this.accumulator += elapsed;
+      // Micro-Hitstop logic
+      if (this.hitstop > 0) {
+        this.hitstop -= elapsed;
+      } else {
+        this.accumulator += elapsed;
 
-      // Fixed 60Hz sim tick
-      while (this.accumulator >= this.fixedDt) {
-        const cmds = [...this.queuedCommands];
-        this.queuedCommands = [];
-        this.world.step(cmds);
-        this.accumulator -= this.fixedDt;
+        // Fixed 60Hz sim tick
+        while (this.accumulator >= this.fixedDt) {
+          const cmds = [...this.queuedCommands];
+          this.queuedCommands = [];
+          this.world.step(cmds);
+          this.accumulator -= this.fixedDt;
+        }
       }
 
       // Check victory sound
@@ -341,8 +436,55 @@ class EchoChainGame {
       // Render world & combat HUD
       this.arenaRenderer.render(this.ctx, this.world, this.vfx, w, h);
       this.hudRenderer.render(this.ctx, this.world, this.run, w, h);
+    } else if (this.screen === "pause") {
+      // Keep rendering frozen combat behind pause modal
+      this.arenaRenderer.render(this.ctx, this.world, this.vfx, w, h);
+      this.hudRenderer.render(this.ctx, this.world, this.run, w, h);
+
+      const settings = this.saveManager.get().settings;
+      this.screens.renderPause(
+        this.ctx,
+        w,
+        h,
+        settings,
+        () => {
+          this.sound.uiClick();
+          this.screen = "combat";
+        },
+        () => {
+          const muted = this.sound.toggleMute();
+          this.saveManager.updateSettings({ muted });
+        },
+        (delta) => {
+          this.sound.uiClick();
+          const newVol = Math.max(0, Math.min(1, Math.round((settings.volume + delta) * 10) / 10));
+          this.sound.setVolume(newVol);
+          this.saveManager.updateSettings({ volume: newVol });
+        },
+        (delta) => {
+          this.sound.uiClick();
+          const newShake = Math.max(0, Math.min(1.5, Math.round((settings.screenShake + delta) * 10) / 10));
+          this.saveManager.updateSettings({ screenShake: newShake });
+        },
+        () => {
+          this.sound.uiClick();
+          this.previousScreen = "pause";
+          this.screen = "codex";
+        },
+        () => {
+          this.sound.uiClick();
+          this.sound.stopAmbientDrone();
+          this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act);
+          this.screen = "title";
+        }
+      );
+    } else if (this.screen === "codex") {
+      const saved = this.saveManager.get();
+      this.screens.renderCodex(this.ctx, w, h, saved.discoveredCombos, () => {
+        this.sound.uiClick();
+        this.screen = this.previousScreen;
+      });
     } else if (this.screen === "victory" || this.screen === "game_over") {
-      // Victory / Game over return
       this.screens.renderTitle(this.ctx, w, h, (form) => this.startExpedition(form));
     }
 

@@ -70,6 +70,20 @@ export class ArenaRenderer {
         case "chain":
           audio?.chainLink(fx.links);
           break;
+        case "arc": {
+          const x0 = fx.from === 0 ? world.fighter.x : world.echoX(fx.from);
+          const x1 = world.echoX(fx.to);
+          const col = fx.family === "ink" ? THEME.fighter : familyColor(fx.family);
+          vfx.addLightning(x0, this.groundY - 32, x1, this.groundY - 32, col);
+          vfx.burst(x1, this.groundY - 32, col, 6, 80);
+          break;
+        }
+        case "trigger": {
+          const x = fx.slot === 0 ? world.fighter.x : world.echoX(fx.slot);
+          const col = fx.family === "ink" ? THEME.fighter : familyColor(fx.family);
+          vfx.burst(x, this.groundY - 32, col, 8, 90);
+          break;
+        }
         case "sync":
           audio?.syncBreak();
           break;
@@ -372,15 +386,33 @@ export class ArenaRenderer {
 
       ctx.globalAlpha = isDead ? Math.max(0, 1 - e.deadT / 0.6) : 1;
 
-      // Telegraph ring / windup indicator
+      // Telegraph ring / windup indicator & warning flare
       if (isWindup && !isDead) {
         ctx.save();
-        ctx.strokeStyle = isBoss ? THEME.enemyBoss : THEME.force;
-        ctx.lineWidth = 2;
+        const pulse = 1 + Math.sin(e.windupT * 24) * 0.25;
+        const col = isBoss ? THEME.enemyBoss : THEME.momentum;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2.5;
+
+        // Ground range ellipse
         ctx.beginPath();
-        const pulse = 1 + Math.sin(e.windupT * 20) * 0.2;
-        ctx.ellipse(0, 0, e.range * pulse * 0.4, 8, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, e.range * pulse * 0.45, 10, 0, 0, Math.PI * 2);
         ctx.stroke();
+
+        // Warning Flare Beacon overhead
+        ctx.fillStyle = col;
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(0, -e.size * 32, 5 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Warning "!" Text
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("!", 0, -e.size * 32);
         ctx.restore();
       }
 

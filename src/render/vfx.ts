@@ -1,10 +1,11 @@
-import type { Camera, FloatingText, Particle, SlashArc } from "./types";
+import type { Camera, ChainLightningArc, FloatingText, Particle, SlashArc } from "./types";
 import { THEME } from "./types";
 
 export class VfxEngine {
   particles: Particle[] = [];
   texts: FloatingText[] = [];
   slashes: SlashArc[] = [];
+  lightning: ChainLightningArc[] = [];
   private nextTextId = 1;
 
   update(dt: number, camera: Camera): void {
@@ -40,6 +41,12 @@ export class VfxEngine {
       s.life -= dt;
     }
     this.slashes = this.slashes.filter((s) => s.life > 0);
+
+    // Lightning arcs
+    for (const l of this.lightning) {
+      l.life -= dt;
+    }
+    this.lightning = this.lightning.filter((l) => l.life > 0);
   }
 
   shake(camera: Camera, intensity: number, duration: number): void {
@@ -98,6 +105,34 @@ export class VfxEngine {
     });
   }
 
+  /** Ink energy lightning arc between two echoes */
+  addLightning(x0: number, y0: number, x1: number, y1: number, color: string): void {
+    const segments = 6;
+    const points: { x: number; y: number }[] = [{ x: x0, y: y0 }];
+    const dx = (x1 - x0) / segments;
+    const dy = (y1 - y0) / segments;
+
+    for (let i = 1; i < segments; i++) {
+      const jitter = (Math.random() - 0.5) * 18;
+      points.push({
+        x: x0 + dx * i + jitter * 0.3,
+        y: y0 + dy * i + jitter,
+      });
+    }
+    points.push({ x: x1, y: y1 });
+
+    this.lightning.push({
+      x0,
+      y0,
+      x1,
+      y1,
+      color,
+      life: 0.18,
+      maxLife: 0.18,
+      points,
+    });
+  }
+
   render(ctx: CanvasRenderingContext2D, camera: Camera, width: number, height: number): void {
     const cx = width / 2;
     const cy = height / 2;
@@ -113,6 +148,25 @@ export class VfxEngine {
     ctx.save();
     ctx.translate(cx + sx - camera.x * camera.zoom, cy + sy - camera.y * camera.zoom);
     ctx.scale(camera.zoom, camera.zoom);
+
+    // Lightning arcs
+    for (const l of this.lightning) {
+      const alpha = Math.max(0, l.life / l.maxLife);
+      ctx.save();
+      ctx.strokeStyle = l.color;
+      ctx.shadowColor = l.color;
+      ctx.shadowBlur = 12;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = 2.5;
+
+      ctx.beginPath();
+      ctx.moveTo(l.points[0]!.x, l.points[0]!.y);
+      for (let i = 1; i < l.points.length; i++) {
+        ctx.lineTo(l.points[i]!.x, l.points[i]!.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Slashes
     for (const s of this.slashes) {
@@ -147,7 +201,6 @@ export class VfxEngine {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
-      // Glow / Shadow
       ctx.shadowColor = t.crit ? "rgba(245, 158, 11, 0.8)" : "rgba(0,0,0,0.8)";
       ctx.shadowBlur = t.crit ? 10 : 4;
       ctx.fillStyle = t.color;

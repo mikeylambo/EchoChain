@@ -54,6 +54,17 @@ export interface ChainPulse {
   life: number;
 }
 
+export interface ChainLightningArc {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  color: string;
+  life: number;
+  maxLife: number;
+  points: { x: number; y: number }[];
+}
+
 export const THEME = {
   bgDark: "#090a0f",
   bgLane: "#12141c",

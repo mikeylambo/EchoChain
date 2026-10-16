@@ -1,11 +1,24 @@
 import { FORMS, FORM_LIST, type FormId } from "../data/forms";
 import { SEAL } from "../data/seals";
-import { TECH } from "../data/techniques";
+import { TECH, TECHNIQUES } from "../data/techniques";
 import { analyzeTrail, type LinkInfo } from "../sim/links";
 import type { DraftCard, MapNode, RunState } from "../sim/run";
 import { THEME, familyColor } from "../render/types";
+import { GDD_COMBOS } from "../debug/combos";
+import type { GameSettings } from "../storage/saveData";
 
-export type ScreenState = "title" | "combat" | "draft" | "organizer" | "fork" | "forge" | "rest" | "victory" | "game_over";
+export type ScreenState =
+  | "title"
+  | "combat"
+  | "draft"
+  | "organizer"
+  | "fork"
+  | "forge"
+  | "rest"
+  | "victory"
+  | "game_over"
+  | "pause"
+  | "codex";
 
 export interface ClickZone {
   id: string;
@@ -37,7 +50,13 @@ export class FlowScreens {
   // ─────────────────────────────────────────────────────────────
   // 1. TITLE SCREEN & FORM SELECTION
   // ─────────────────────────────────────────────────────────────
-  renderTitle(ctx: CanvasRenderingContext2D, width: number, height: number, onStart: (form: FormId) => void): void {
+  renderTitle(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    onStart: (form: FormId) => void,
+    onOpenCodex?: () => void
+  ): void {
     this.resetZones();
     ctx.save();
 
@@ -65,7 +84,39 @@ export class FlowScreens {
     ctx.font = "14px system-ui, sans-serif";
     ctx.fillText("A KINETIC ROGUE-LITE", width / 2, height * 0.23);
 
+    // Codex Button in top right
+    if (onOpenCodex) {
+      const codexBtnW = 120;
+      const codexBtnH = 32;
+      const codexBtnX = width - codexBtnW - 20;
+      const codexBtnY = 20;
+
+      this.clickZones.push({
+        id: "title-codex",
+        x: codexBtnX,
+        y: codexBtnY,
+        w: codexBtnW,
+        h: codexBtnH,
+        action: onOpenCodex,
+      });
+
+      ctx.fillStyle = "rgba(30, 41, 59, 0.85)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(codexBtnX, codexBtnY, codexBtnW, codexBtnH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = THEME.precision;
+      ctx.font = "bold 11px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("📖 CODEX", codexBtnX + codexBtnW / 2, codexBtnY + codexBtnH / 2);
+    }
+
     // Prompt
+    ctx.textAlign = "center";
     ctx.fillStyle = "#e2e8f0";
     ctx.font = "bold 13px system-ui, sans-serif";
     ctx.fillText("SELECT YOUR COMBAT FORM", width / 2, height * 0.32);
@@ -870,6 +921,371 @@ export class FlowScreens {
         ctx.fillStyle = "#64748b";
         ctx.fillText("MAX RANK", x + slotW / 2, y + 110);
       }
+    });
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 7. PAUSE MENU & SETTINGS SCREEN
+  // ─────────────────────────────────────────────────────────────
+  renderPause(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    settings: GameSettings,
+    onResume: () => void,
+    onToggleMute: () => void,
+    onChangeVolume: (delta: number) => void,
+    onChangeShake: (delta: number) => void,
+    onOpenCodex: () => void,
+    onAbandon: () => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    // Dark translucent backdrop
+    ctx.fillStyle = "rgba(4, 7, 13, 0.88)";
+    ctx.fillRect(0, 0, width, height);
+
+    // Modal Card
+    const cardW = Math.min(360, width * 0.88);
+    const cardH = 380;
+    const cardX = (width - cardW) / 2;
+    const cardY = (height - cardH) / 2;
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.96)";
+    ctx.strokeStyle = THEME.precision;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(cardX, cardY, cardW, cardH, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    // Title
+    ctx.textAlign = "center";
+    ctx.font = "bold 22px system-ui, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("PAUSED", width / 2, cardY + 40);
+
+    // 1. Resume Button
+    const btnW = cardW - 48;
+    const btnH = 38;
+    const btnX = cardX + 24;
+
+    let curY = cardY + 68;
+    this.clickZones.push({
+      id: "pause-resume",
+      x: btnX,
+      y: curY,
+      w: btnW,
+      h: btnH,
+      action: onResume,
+    });
+    ctx.fillStyle = THEME.precision;
+    ctx.beginPath();
+    ctx.roundRect(btnX, curY, btnW, btnH, 6);
+    ctx.fill();
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("RESUME EXPEDITION [ESC]", btnX + btnW / 2, curY + btnH / 2);
+
+    // 2. Volume Row
+    curY += 52;
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("MASTER VOLUME", btnX, curY + 12);
+
+    // [-] button
+    const volMinusX = btnX + btnW - 110;
+    this.clickZones.push({
+      id: "vol-minus",
+      x: volMinusX,
+      y: curY - 2,
+      w: 28,
+      h: 28,
+      action: () => onChangeVolume(-0.1),
+    });
+    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(volMinusX, curY - 2, 28, 28, 4);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 14px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("-", volMinusX + 14, curY + 12);
+
+    // Vol value
+    ctx.font = "bold 12px monospace";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`${Math.round(settings.volume * 100)}%`, volMinusX + 54, curY + 12);
+
+    // [+] button
+    const volPlusX = btnX + btnW - 30;
+    this.clickZones.push({
+      id: "vol-plus",
+      x: volPlusX,
+      y: curY - 2,
+      w: 28,
+      h: 28,
+      action: () => onChangeVolume(0.1),
+    });
+    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(volPlusX, curY - 2, 28, 28, 4);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 14px monospace";
+    ctx.fillText("+", volPlusX + 14, curY + 12);
+
+    // 3. Screen Shake Row
+    curY += 46;
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("SCREEN SHAKE", btnX, curY + 12);
+
+    // Shake [-] button
+    this.clickZones.push({
+      id: "shake-minus",
+      x: volMinusX,
+      y: curY - 2,
+      w: 28,
+      h: 28,
+      action: () => onChangeShake(-0.25),
+    });
+    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(volMinusX, curY - 2, 28, 28, 4);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 14px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("-", volMinusX + 14, curY + 12);
+
+    // Shake value
+    ctx.font = "bold 12px monospace";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(`${Math.round(settings.screenShake * 100)}%`, volMinusX + 54, curY + 12);
+
+    // Shake [+] button
+    this.clickZones.push({
+      id: "shake-plus",
+      x: volPlusX,
+      y: curY - 2,
+      w: 28,
+      h: 28,
+      action: () => onChangeShake(0.25),
+    });
+    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(volPlusX, curY - 2, 28, 28, 4);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 14px monospace";
+    ctx.fillText("+", volPlusX + 14, curY + 12);
+
+    // 4. Mute Toggle
+    curY += 46;
+    this.clickZones.push({
+      id: "pause-mute",
+      x: btnX,
+      y: curY,
+      w: btnW,
+      h: 32,
+      action: onToggleMute,
+    });
+    ctx.fillStyle = "rgba(30, 41, 59, 0.8)";
+    ctx.beginPath();
+    ctx.roundRect(btnX, curY, btnW, 32, 6);
+    ctx.fill();
+    ctx.fillStyle = settings.muted ? THEME.healthRed : THEME.flow;
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(settings.muted ? "AUDIO: MUTED (TAP TO UNMUTE)" : "AUDIO: ACTIVE (TAP TO MUTE)", btnX + btnW / 2, curY + 16);
+
+    // 5. Open Codex Button
+    curY += 44;
+    this.clickZones.push({
+      id: "pause-codex",
+      x: btnX,
+      y: curY,
+      w: btnW,
+      h: 34,
+      action: onOpenCodex,
+    });
+    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+    ctx.strokeStyle = THEME.precision;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(btnX, curY, btnW, 34, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 12px system-ui, sans-serif";
+    ctx.fillText("📖 VIEW COMBO CODEX", btnX + btnW / 2, curY + 17);
+
+    // 6. Abandon Run Button
+    curY += 44;
+    this.clickZones.push({
+      id: "pause-abandon",
+      x: btnX,
+      y: curY,
+      w: btnW,
+      h: 32,
+      action: onAbandon,
+    });
+    ctx.fillStyle = "rgba(220, 38, 38, 0.2)";
+    ctx.strokeStyle = THEME.healthRed;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(btnX, curY, btnW, 32, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = THEME.healthRed;
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.fillText("ABANDON EXPEDITION", btnX + btnW / 2, curY + 16);
+
+    ctx.restore();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 8. CODEX / COMBO COMPENDIUM SCREEN
+  // ─────────────────────────────────────────────────────────────
+  renderCodex(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    discoveredCombos: string[],
+    onClose: () => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    // Dark backdrop
+    ctx.fillStyle = "rgba(7, 10, 16, 0.96)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 24px system-ui, sans-serif";
+    ctx.fillText("COMBO CODEX & COMPENDIUM", width / 2, 42);
+
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Master the four legendary chain sequences and the authoritative techniques", width / 2, 64);
+
+    // Close Button top-right
+    const closeBtnW = 100;
+    const closeBtnH = 32;
+    const closeBtnX = width - closeBtnW - 20;
+    const closeBtnY = 24;
+
+    this.clickZones.push({
+      id: "close-codex",
+      x: closeBtnX,
+      y: closeBtnY,
+      w: closeBtnW,
+      h: closeBtnH,
+      action: onClose,
+    });
+
+    ctx.fillStyle = THEME.precision;
+    ctx.beginPath();
+    ctx.roundRect(closeBtnX, closeBtnY, closeBtnW, closeBtnH, 6);
+    ctx.fill();
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 12px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("CLOSE [ESC]", closeBtnX + closeBtnW / 2, closeBtnY + closeBtnH / 2);
+
+    // Section 1: The 4 Legendary Combos
+    ctx.textAlign = "left";
+    ctx.fillStyle = THEME.precision;
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.fillText("LEGENDARY SYNERGY SEQUENCES (GDD §6)", 30, 100);
+
+    const comboCardW = Math.min(260, (width - 80) / 2);
+    const comboCardH = 92;
+    const startY = 114;
+
+    GDD_COMBOS.forEach((spec, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = 30 + col * (comboCardW + 20);
+      const y = startY + row * (comboCardH + 12);
+
+      const isDiscovered = discoveredCombos.includes(spec.name);
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.strokeStyle = isDiscovered ? THEME.precision : "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = isDiscovered ? 1.5 : 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, comboCardW, comboCardH, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Combo Name & Badge
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(spec.name.toUpperCase(), x + 12, y + 22);
+
+      ctx.textAlign = "right";
+      ctx.font = "bold 10px monospace";
+      ctx.fillStyle = isDiscovered ? THEME.healthGreen : "#64748b";
+      ctx.fillText(isDiscovered ? "✓ DISCOVERED" : "🔒 LOCKED", x + comboCardW - 12, y + 22);
+
+      // Sequence Trail
+      ctx.textAlign = "left";
+      ctx.font = "bold 11px monospace";
+      ctx.fillStyle = THEME.flow;
+      ctx.fillText(spec.trail.join(" ➔ "), x + 12, y + 44);
+
+      // Claim Description
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.fillStyle = "#cbd5e1";
+      this.renderWrappedText(ctx, spec.claim, x + 12, y + 62, comboCardW - 24, 13);
+    });
+
+    // Section 2: Technique Compendium Grid
+    const techStartY = startY + 2 * (comboCardH + 12) + 24;
+    ctx.textAlign = "left";
+    ctx.fillStyle = THEME.flow;
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.fillText("AUTHORITATIVE TECHNIQUE ARCHETYPES", 30, techStartY);
+
+    const techCardW = Math.min(180, (width - 70) / 4);
+    const techCardH = 72;
+    const gridStartY = techStartY + 14;
+
+    TECHNIQUES.slice(0, 8).forEach((tech, i) => {
+      const col = i % 4;
+      const row = Math.floor(i / 4);
+      const x = 30 + col * (techCardW + 10);
+      const y = gridStartY + row * (techCardH + 10);
+      const color = familyColor(tech.family);
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x, y, techCardW, techCardH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.fillStyle = color;
+      ctx.fillText(tech.name, x + 10, y + 20);
+
+      ctx.font = "9px monospace";
+      ctx.fillStyle = "#94a3b8";
+      ctx.fillText(`IN: ${tech.receives.join(",")} ➜ OUT: ${tech.emits.join(",")}`, x + 10, y + 36);
+
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.fillStyle = "#cbd5e1";
+      this.renderWrappedText(ctx, tech.desc, x + 10, y + 52, techCardW - 20, 12);
     });
 
     ctx.restore();
