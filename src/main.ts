@@ -2,6 +2,7 @@ import { STARTER_TECHS } from "./data/techniques";
 import type { FormId } from "./data/forms";
 import {
   advance,
+  addRelic,
   applyCard,
   applyFight,
   betweenFights,
@@ -17,7 +18,8 @@ import {
   type MapNode,
   type RunState,
 } from "./sim/run";
-import { World, type Command } from "./sim/world";
+import { World, type Command, type FightConfig } from "./sim/world";
+import { RELIC_LIST } from "./data/relics";
 import { ArenaRenderer } from "./render/arenaRenderer";
 import { HudRenderer } from "./render/hudRenderer";
 import { VfxEngine } from "./render/vfx";
@@ -57,6 +59,11 @@ class EchoChainGame {
   private readonly fixedDt = 1 / 60; // 60Hz authoritative sim tick
   private queuedCommands: Command[] = [];
 
+  // Deterministic Replay System
+  private currentFightConfig: FightConfig | null = null;
+  private recordedCommands: { tick: number; type: "strike" | "sync" }[] = [];
+  private isReplaying = false;
+
   init(): void {
     const canvasEl = document.getElementById("game-canvas") as HTMLCanvasElement;
     if (!canvasEl) throw new Error("Missing #game-canvas in DOM");
@@ -93,11 +100,17 @@ class EchoChainGame {
     }
   }
 
-  private startExpedition(form: FormId, ascension = 0, mode: "standard" | "endless" = "standard"): void {
+  private startExpedition(
+    form: FormId,
+    ascension = 0,
+    mode: "standard" | "endless" | "daily" = "standard",
+    customSeed?: string
+  ): void {
     this.sound.init();
     this.sound.uiClick();
 
-    const seed = `run-${Date.now().toString(36)}`;
+    const today = new Date().toISOString().slice(0, 10);
+    const seed = customSeed || (mode === "daily" ? `DAILY-${today}` : `run-${Date.now().toString(36)}`);
     this.run = newRun(seed, form, ascension, mode, [...STARTER_TECHS]);
 
     // Opening draft
@@ -109,7 +122,11 @@ class EchoChainGame {
   private loadCurrentFight(): void {
     const step = currentStep(this.run);
     const node = chooseFork(this.run, step.chosen >= 0 ? step.chosen : 0);
-    this.world = new World(fightConfig(this.run, node));
+    const cfg = fightConfig(this.run, node);
+    this.currentFightConfig = cfg;
+    this.recordedCommands = [];
+    this.isReplaying = false;
+    this.world = new World(cfg);
     this.queuedCommands = [];
     this.victorySoundPlayed = false;
     this.hitstop = 0;
@@ -121,12 +138,46 @@ class EchoChainGame {
     this.screen = "combat";
   }
 
+  private startReplay(): void {
+    if (!this.currentFightConfig) return;
+    this.sound.uiClick();
+    this.world = new World(this.currentFightConfig);
+    this.queuedCommands = [];
+    this.victorySoundPlayed = false;
+    this.hitstop = 0;
+    this.isReplaying = true;
+
+    this.sound.startAmbientDrone();
+    this.sound.setBossIntensity(!!this.world.boss);
+
+    this.screen = "combat";
+  }
+
+  private recordLeaderboardForRun(won: boolean): void {
+    const score = Math.round(
+      (this.run.stats.kills * 120 + this.run.stats.longestChain * 250 + (won ? 5000 : 0)) *
+        (1 + this.run.ascension * 0.2)
+    );
+    this.saveManager.recordLeaderboardEntry({
+      mode: this.run.mode,
+      form: this.run.form,
+      ascension: this.run.ascension,
+      score,
+      kills: this.run.stats.kills,
+      longestChain: this.run.stats.longestChain,
+      durationMs: this.run.stats.timeMs,
+      won,
+      seed: this.run.seed,
+    });
+  }
+
   private checkNextStep(): void {
     if (this.run.status === "won") {
       this.sound.stopAmbientDrone();
       this.screen = "victory";
       this.sound.victory();
       this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act, this.run.ascension, this.run.mode);
+      this.recordLeaderboardForRun(true);
       if (this.run.ascension >= 5) {
         this.tryUnlockAchievement("ascension_5");
       }
@@ -139,6 +190,7 @@ class EchoChainGame {
       this.sound.stopAmbientDrone();
       this.screen = "game_over";
       this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, false, this.run.act, this.run.ascension, this.run.mode);
+      this.recordLeaderboardForRun(false);
       return;
     }
 
@@ -188,6 +240,7 @@ class EchoChainGame {
         this.screen = "victory";
         this.sound.victory();
         this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act, this.run.ascension, this.run.mode);
+        this.recordLeaderboardForRun(true);
         if (this.run.ascension >= 5) {
           this.tryUnlockAchievement("ascension_5");
         }
@@ -202,6 +255,7 @@ class EchoChainGame {
     } else if (this.world.outcome === "lost") {
       this.sound.stopAmbientDrone();
       this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act, this.run.ascension, this.run.mode);
+      this.recordLeaderboardForRun(false);
       this.screen = "title";
     }
   }
@@ -341,7 +395,7 @@ class EchoChainGame {
 
   private handleSpaceKey(): void {
     if (this.screen === "title") {
-      this.startExpedition(this.screens.selectedForm, this.screens.selectedAscension, this.screens.selectedMode);
+      this.startExpedition(this.screens.selectedForm, this.screens.selectedAscension, this.screens.selectedMode, this.screens.customSeed || undefined);
     } else if (this.screen === "combat") {
       if (this.world.outcome !== "running") {
         this.advanceEncounter();
@@ -356,6 +410,7 @@ class EchoChainGame {
   }
 
   private handleCombatAction(): void {
+    if (this.isReplaying) return;
     if (this.world.outcome !== "running") {
       this.advanceEncounter();
       return;
@@ -364,8 +419,10 @@ class EchoChainGame {
     if (this.world.chargeFull) {
       this.triggerSync();
     } else {
+      this.recordedCommands.push({ tick: this.world.tick, type: "strike" });
       const evs = this.world.fighterStrike(false);
       this.sound.slash();
+      this.gamepad.rumble(0.2, 0.1, 35);
       this.vfx.addSlash(this.world.fighter.x + 24, 50, 30);
 
       // Hitstop micro-pause on crit (45ms)
@@ -377,8 +434,12 @@ class EchoChainGame {
 
   private triggerSync(): void {
     if (this.world.outcome === "running") {
+      if (!this.isReplaying) {
+        this.recordedCommands.push({ tick: this.world.tick, type: "sync" });
+      }
       this.queuedCommands.push({ type: "sync" });
       this.sound.syncBreak();
+      this.gamepad.rumble(0.8, 1.0, 260);
 
       // Cinematic 60ms hitstop on Sync Break activation
       this.hitstop = 0.06;
@@ -463,7 +524,7 @@ class EchoChainGame {
       }
 
       if (pad.primaryPressed) {
-        this.startExpedition(this.screens.selectedForm, this.screens.selectedAscension, this.screens.selectedMode);
+        this.startExpedition(this.screens.selectedForm, this.screens.selectedAscension, this.screens.selectedMode, this.screens.customSeed || undefined);
       }
     } else if (this.screen === "combat") {
       if (pad.syncPressed) {
@@ -472,8 +533,15 @@ class EchoChainGame {
         this.handleCombatAction();
       }
     } else if (this.screen === "codex") {
-      if (pad.dpadLeft || pad.dpadRight) {
-        this.screens.codexTab = this.screens.codexTab === "combos" ? "achievements" : "combos";
+      const tabs: ("combos" | "achievements" | "leaderboard" | "data")[] = ["combos", "achievements", "leaderboard", "data"];
+      const currentIdx = tabs.indexOf(this.screens.codexTab);
+      if (pad.dpadLeft) {
+        const nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+        this.screens.codexTab = tabs[nextIdx]!;
+        this.sound.uiClick();
+      } else if (pad.dpadRight) {
+        const nextIdx = (currentIdx + 1) % tabs.length;
+        this.screens.codexTab = tabs[nextIdx]!;
         this.sound.uiClick();
       }
     } else if (this.screen === "organizer") {
@@ -504,6 +572,16 @@ class EchoChainGame {
         this.run.hp = Math.min(this.run.maxHp, this.run.hp + this.run.maxHp * 0.35);
         advance(this.run);
         this.screen = "organizer";
+      } else if (pad.syncPressed) {
+        this.sound.uiClick();
+        rest(this.run, false);
+        const unowned = RELIC_LIST.filter((r) => !this.run.relics.includes(r.id));
+        if (unowned.length > 0) {
+          const picked = unowned[Math.floor(Math.random() * unowned.length)]!;
+          addRelic(this.run, picked.id);
+        }
+        advance(this.run);
+        this.screen = "organizer";
       }
     } else if (this.screen === "forge") {
       if (pad.primaryPressed) {
@@ -516,6 +594,8 @@ class EchoChainGame {
       if (pad.primaryPressed) {
         this.sound.uiClick();
         this.screen = "title";
+      } else if (pad.syncPressed && this.currentFightConfig) {
+        this.startReplay();
       }
     }
   }
@@ -538,7 +618,7 @@ class EchoChainGame {
         h,
         saved.unlockedForms,
         saved.highestAscension,
-        (form, ascension, mode) => this.startExpedition(form, ascension, mode),
+        (form, ascension, mode, seed) => this.startExpedition(form, ascension, mode, seed),
         () => {
           this.previousScreen = "title";
           this.screen = "codex";
@@ -595,7 +675,16 @@ class EchoChainGame {
       this.screens.renderRest(this.ctx, w, h, this.run, (heal) => {
         this.sound.uiClick();
         rest(this.run, heal);
-        if (heal) this.run.hp = Math.min(this.run.maxHp, this.run.hp + this.run.maxHp * 0.35);
+        if (heal) {
+          this.run.hp = Math.min(this.run.maxHp, this.run.hp + this.run.maxHp * 0.35);
+        } else {
+          const unowned = RELIC_LIST.filter((r) => !this.run.relics.includes(r.id));
+          if (unowned.length > 0) {
+            const picked = unowned[Math.floor(Math.random() * unowned.length)]!;
+            addRelic(this.run, picked.id);
+            this.vfx.addText(w / 2, h / 2, `✦ RELIC: ${picked.name.toUpperCase()}!`, "#38bdf8", 22, true);
+          }
+        }
         advance(this.run);
         this.screen = "organizer";
       });
@@ -615,6 +704,18 @@ class EchoChainGame {
 
         // Fixed 60Hz sim tick
         while (this.accumulator >= this.fixedDt) {
+          if (this.isReplaying) {
+            const replayCmds = this.recordedCommands.filter((c) => c.tick === this.world.tick);
+            for (const cmd of replayCmds) {
+              if (cmd.type === "strike") {
+                this.world.fighterStrike(false);
+                this.sound.slash();
+              } else if (cmd.type === "sync") {
+                this.queuedCommands.push({ type: "sync" });
+                this.sound.syncBreak();
+              }
+            }
+          }
           const cmds = [...this.queuedCommands];
           this.queuedCommands = [];
           this.world.step(cmds);
@@ -628,8 +729,8 @@ class EchoChainGame {
         this.sound.victory();
       }
 
-      // Update presentation with audio routing
-      this.arenaRenderer.update(this.world, elapsed, this.vfx, this.sound);
+      // Update presentation with audio routing and haptic feedback
+      this.arenaRenderer.update(this.world, elapsed, this.vfx, this.sound, this.gamepad);
       this.vfx.update(elapsed, this.arenaRenderer.camera);
 
       // Check chain length achievements
@@ -687,7 +788,7 @@ class EchoChainGame {
         () => {
           this.sound.uiClick();
           this.sound.stopAmbientDrone();
-          this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act);
+          this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act, this.run.ascension, this.run.mode);
           this.screen = "title";
         }
       );
@@ -699,9 +800,27 @@ class EchoChainGame {
         h,
         saved.discoveredCombos,
         saved.unlockedAchievements ?? [],
+        saved.leaderboard ?? [],
         () => {
           this.sound.uiClick();
           this.screen = this.previousScreen;
+        },
+        () => {
+          const b64 = this.saveManager.exportSave();
+          try {
+            navigator.clipboard?.writeText(b64);
+            alert("Save data exported and copied to clipboard!");
+          } catch {
+            prompt("Copy your exported save data:", b64);
+          }
+        },
+        (code) => {
+          const ok = this.saveManager.importSave(code);
+          if (ok) {
+            alert("Save data successfully imported!");
+          } else {
+            alert("Invalid save data string.");
+          }
         }
       );
     } else if (this.screen === "victory" || this.screen === "game_over") {
@@ -714,7 +833,8 @@ class EchoChainGame {
         () => {
           this.sound.uiClick();
           this.screen = "title";
-        }
+        },
+        this.currentFightConfig ? () => this.startReplay() : undefined
       );
     }
 

@@ -1,7 +1,7 @@
 import { TECH, type TechniqueDef } from "../data/techniques";
 import { TUNING } from "../data/tuning";
 import type { ActionCtx } from "./action";
-import { dealHit, isAlive, launch, stagger, type DamageSource } from "./combat";
+import { applyDamage, dealHit, isAlive, launch, stagger, type DamageSource } from "./combat";
 import type { ChainEvent, ChainEventType, Enemy, Packet, Receive, WorldEventType } from "./types";
 import type { World } from "./world";
 
@@ -245,9 +245,20 @@ export class ChainEngine {
       if (links >= 2) w.fx.push({ k: "chain", links });
       if (links > w.stats.longestChain) w.stats.longestChain = links;
       w.stats.chainCounts[links] = (w.stats.chainCounts[links] ?? 0) + 1;
-      if (links >= 5 && !rec.taxed && w.mods.chainTax > 0) {
-        rec.taxed = true;
-        w.healFighter(w.mods.chainTax);
+      if (links >= 5 && !rec.taxed) {
+        if (w.mods.chainTax > 0) {
+          rec.taxed = true;
+          w.healFighter(w.mods.chainTax);
+        }
+        if (w.cfg.relics?.includes("vampiric_edge")) {
+          rec.taxed = true;
+          w.healFighter(4);
+        }
+      }
+      if (links >= 4 && w.cfg.relics?.includes("resonant_prism")) {
+        for (const enemy of w.aliveSorted()) {
+          applyDamage(w, { slot: 0, tech: "resonant_prism", family: "resonance", chainId, links, sync: false }, enemy, 35, false);
+        }
       }
       if (links >= TUNING.originalLinkRule) w.flushOriginal(chainId);
       if (links >= TUNING.originalStaggerChain && !rec.staggered) {

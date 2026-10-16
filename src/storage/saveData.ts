@@ -1,9 +1,32 @@
 import type { FormId } from "../data/forms";
 
+export interface KeybindSettings {
+  strike: string;
+  sync: string;
+  pause: string;
+  codex: string;
+}
+
 export interface GameSettings {
   volume: number;      // 0..1
   screenShake: number; // 0..1
   muted: boolean;
+  haptics: boolean;
+  keybinds: KeybindSettings;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  date: string;
+  form: FormId;
+  mode: "standard" | "endless" | "daily";
+  score: number;
+  kills: number;
+  longestChain: number;
+  won: boolean;
+  durationMs: number;
+  ascension: number;
+  seed: string;
 }
 
 export interface SaveData {
@@ -12,6 +35,7 @@ export interface SaveData {
   highestAscension: number;
   discoveredCombos: string[];
   unlockedAchievements: string[];
+  leaderboard: LeaderboardEntry[];
   bestChain: number;
   totalKills: number;
   totalRuns: number;
@@ -26,6 +50,7 @@ const DEFAULT_SAVE: SaveData = {
   highestAscension: 0,
   discoveredCombos: [],
   unlockedAchievements: [],
+  leaderboard: [],
   bestChain: 0,
   totalKills: 0,
   totalRuns: 0,
@@ -33,6 +58,13 @@ const DEFAULT_SAVE: SaveData = {
     volume: 0.7,
     screenShake: 1.0,
     muted: false,
+    haptics: true,
+    keybinds: {
+      strike: "Space",
+      sync: "KeyS",
+      pause: "Escape",
+      codex: "KeyC",
+    },
   },
 };
 
@@ -112,7 +144,7 @@ export class SaveManager {
     won: boolean,
     act: number,
     ascension = 0,
-    mode: "standard" | "endless" = "standard"
+    mode: "standard" | "endless" | "daily" = "standard"
   ): void {
     this.data.totalRuns++;
     this.data.totalKills += kills;
@@ -143,5 +175,44 @@ export class SaveManager {
   updateSettings(settings: Partial<GameSettings>): void {
     this.data.settings = { ...this.data.settings, ...settings };
     this.save();
+  }
+
+  recordLeaderboardEntry(entry: Omit<LeaderboardEntry, "id" | "date">): LeaderboardEntry {
+    if (!this.data.leaderboard) {
+      this.data.leaderboard = [];
+    }
+    const newEntry: LeaderboardEntry = {
+      ...entry,
+      id: `entry-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      date: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
+    };
+    this.data.leaderboard.unshift(newEntry);
+    // Keep top 30 records
+    this.data.leaderboard = this.data.leaderboard.slice(0, 30);
+    this.save();
+    return newEntry;
+  }
+
+  exportSave(): string {
+    return btoa(unescape(encodeURIComponent(JSON.stringify(this.data))));
+  }
+
+  importSave(encoded: string): boolean {
+    try {
+      const decoded = decodeURIComponent(escape(atob(encoded.trim())));
+      const parsed = JSON.parse(decoded);
+      if (parsed && parsed.version === 1) {
+        this.data = {
+          ...DEFAULT_SAVE,
+          ...parsed,
+          settings: { ...DEFAULT_SAVE.settings, ...parsed.settings },
+        };
+        this.save();
+        return true;
+      }
+    } catch (e) {
+      console.warn("[EchoChain] Failed to import save:", e);
+    }
+    return false;
   }
 }

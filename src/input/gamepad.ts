@@ -150,4 +150,35 @@ export class GamepadManager {
     if (this.activeDevice === "touch") return "[ ⏸ ]";
     return "[ESC]";
   }
+
+  rumble(weakMagnitude = 0.3, strongMagnitude = 0.5, durationMs = 120): void {
+    if (typeof navigator !== "undefined" && navigator.getGamepads) {
+      try {
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          const pad = gamepads[i];
+          if (pad && pad.connected) {
+            const actuator = (pad as any).vibrationActuator;
+            if (actuator && typeof actuator.playEffect === "function") {
+              actuator.playEffect("dual-rumble", {
+                startDelay: 0,
+                duration: durationMs,
+                weakMagnitude: Math.min(1, Math.max(0, weakMagnitude)),
+                strongMagnitude: Math.min(1, Math.max(0, strongMagnitude)),
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch {
+        // Ignore browsers with partial vibration support
+      }
+    }
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      try {
+        navigator.vibrate(Math.min(200, durationMs));
+      } catch {
+        // Ignore mobile devices blocking vibration
+      }
+    }
+  }
 }

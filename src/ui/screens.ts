@@ -5,9 +5,10 @@ import { analyzeTrail, type LinkInfo } from "../sim/links";
 import type { DraftCard, MapNode, RunState } from "../sim/run";
 import { THEME, familyColor } from "../render/types";
 import { GDD_COMBOS } from "../debug/combos";
-import type { GameSettings } from "../storage/saveData";
+import type { GameSettings, LeaderboardEntry } from "../storage/saveData";
 import { ASCENSIONS } from "../data/bosses";
 import { ACHIEVEMENTS, type AchievementDef } from "../game/achievements";
+import { RELICS } from "../data/relics";
 
 export type ScreenState =
   | "title"
@@ -34,9 +35,10 @@ export interface ClickZone {
 export class FlowScreens {
   clickZones: ClickZone[] = [];
   selectedForm: FormId = "duelist";
-  selectedMode: "standard" | "endless" = "standard";
+  selectedMode: "standard" | "endless" | "daily" = "standard";
   selectedAscension = 0;
-  codexTab: "combos" | "achievements" = "combos";
+  codexTab: "combos" | "achievements" | "leaderboard" | "data" = "combos";
+  customSeed = "";
 
   resetZones(): void {
     this.clickZones = [];
@@ -61,7 +63,7 @@ export class FlowScreens {
     height: number,
     unlockedForms: FormId[],
     highestAscension: number,
-    onStart: (form: FormId, ascension: number, mode: "standard" | "endless") => void,
+    onStart: (form: FormId, ascension: number, mode: "standard" | "endless" | "daily", customSeed?: string) => void,
     onOpenCodex?: () => void,
     primaryPrompt = "[SPACE]",
     onInstallApp?: () => void
@@ -165,14 +167,15 @@ export class FlowScreens {
       ctx.fillText("📖 CODEX", codexBtnX + codexBtnW / 2, codexBtnY + codexBtnH / 2);
     }
 
-    // ── GAME MODE TOGGLE ──────────────────────────────────
+    // ── GAME MODE TOGGLE (STANDARD vs ENDLESS vs DAILY) ──
     const modeY = height * 0.19;
-    const modeW = 170;
+    const modeW = Math.min(130, (width - 60) / 3);
     const modeH = 32;
-    const modeSpacing = 12;
-    const totalModeW = modeW * 2 + modeSpacing;
+    const modeSpacing = 8;
+    const totalModeW = modeW * 3 + modeSpacing * 2;
     const standardX = (width - totalModeW) / 2;
     const endlessX = standardX + modeW + modeSpacing;
+    const dailyX = endlessX + modeW + modeSpacing;
 
     // Standard Mode Button
     const isStandard = this.selectedMode === "standard";
@@ -192,10 +195,10 @@ export class FlowScreens {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = isStandard ? "#ffffff" : "#94a3b8";
-    ctx.font = `bold ${isStandard ? "12px" : "11px"} system-ui, sans-serif`;
+    ctx.font = `bold ${isStandard ? "11px" : "10px"} system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("⚔️ 3-ACT EXPEDITION", standardX + modeW / 2, modeY + modeH / 2);
+    ctx.fillText("⚔️ 3-ACT EXP", standardX + modeW / 2, modeY + modeH / 2);
 
     // Endless Mode Button
     const isEndless = this.selectedMode === "endless";
@@ -215,8 +218,42 @@ export class FlowScreens {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = isEndless ? "#ffffff" : "#94a3b8";
-    ctx.font = `bold ${isEndless ? "12px" : "11px"} system-ui, sans-serif`;
-    ctx.fillText("♾️ ENDLESS ABYSS", endlessX + modeW / 2, modeY + modeH / 2);
+    ctx.font = `bold ${isEndless ? "11px" : "10px"} system-ui, sans-serif`;
+    ctx.fillText("♾️ ENDLESS", endlessX + modeW / 2, modeY + modeH / 2);
+
+    // Daily Challenge Button
+    const isDaily = this.selectedMode === "daily";
+    this.clickZones.push({
+      id: "mode-daily",
+      x: dailyX,
+      y: modeY,
+      w: modeW,
+      h: modeH,
+      action: () => { this.selectedMode = "daily"; },
+    });
+    ctx.fillStyle = isDaily ? "rgba(245, 158, 11, 0.25)" : "rgba(15, 23, 42, 0.7)";
+    ctx.strokeStyle = isDaily ? "#fbbf24" : "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = isDaily ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(dailyX, modeY, modeW, modeH, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = isDaily ? "#ffffff" : "#94a3b8";
+    ctx.font = `bold ${isDaily ? "11px" : "10px"} system-ui, sans-serif`;
+    ctx.fillText("📅 DAILY RUN", dailyX + modeW / 2, modeY + modeH / 2);
+
+    // ── DAILY CHALLENGE MUTATOR BANNER ──
+    if (this.selectedMode === "daily") {
+      const dailyY = height * 0.255;
+      ctx.textAlign = "center";
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.fillStyle = "#fbbf24";
+      const dateStr = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      ctx.fillText(`📅 TODAY'S DAILY RUN: ${dateStr}`, width / 2, dailyY + 8);
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillStyle = "#cbd5e1";
+      ctx.fillText("★ MUTATOR: GLASS CANNON (+50% Crit Damage, -35% Max HP)", width / 2, dailyY + 26);
+    }
 
     // ── ASCENSION SELECTOR (STANDARD MODE ONLY) ───────────
     if (this.selectedMode === "standard") {
@@ -422,11 +459,35 @@ export class FlowScreens {
       }
     });
 
-    // ── START BUTTON ──────────────────────────────────────
+    // ── BUTTON GEOMETRY ──────────────────────────────────
     const btnW = 280;
     const btnH = 48;
     const btnX = (width - btnW) / 2;
-    const btnY = height * 0.79;
+    const btnY = Math.min(height - 70, startY + cardH + 46);
+
+    // ── CUSTOM SEED PROMPT ────────────────────────────────
+    const seedY = btnY - 24;
+    ctx.font = "11px monospace";
+    ctx.fillStyle = "#64748b";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`SEED: ${this.customSeed || "AUTO-GENERATED"} [CLICK TO SET]`, width / 2, seedY);
+
+    this.clickZones.push({
+      id: "title-custom-seed",
+      x: width / 2 - 130,
+      y: seedY - 12,
+      w: 260,
+      h: 22,
+      action: () => {
+        const input = prompt("Enter custom run seed (or leave blank for random):", this.customSeed);
+        if (input !== null) {
+          this.customSeed = input.trim();
+        }
+      },
+    });
+
+    // ── START BUTTON ──────────────────────────────────────
 
     this.clickZones.push({
       id: "start-game",
@@ -434,7 +495,7 @@ export class FlowScreens {
       y: btnY,
       w: btnW,
       h: btnH,
-      action: () => onStart(this.selectedForm, this.selectedAscension, this.selectedMode),
+      action: () => onStart(this.selectedForm, this.selectedAscension, this.selectedMode, this.customSeed || undefined),
     });
 
     ctx.fillStyle = THEME.precision;
@@ -446,7 +507,12 @@ export class FlowScreens {
     ctx.font = "bold 15px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const startText = this.selectedMode === "endless" ? `ENTER THE ABYSS ${primaryPrompt}` : `BEGIN EXPEDITION ${primaryPrompt}`;
+    let startText = `BEGIN EXPEDITION ${primaryPrompt}`;
+    if (this.selectedMode === "endless") {
+      startText = `ENTER THE ABYSS ${primaryPrompt}`;
+    } else if (this.selectedMode === "daily") {
+      startText = `START DAILY RUN ${primaryPrompt}`;
+    }
     ctx.fillText(startText, btnX + btnW / 2, btnY + btnH / 2);
 
     ctx.restore();
@@ -1402,7 +1468,10 @@ export class FlowScreens {
     height: number,
     discoveredCombos: string[],
     unlockedAchievements: string[],
-    onClose: () => void
+    leaderboard: LeaderboardEntry[],
+    onClose: () => void,
+    onExportSave?: () => void,
+    onImportSave?: (code: string) => void
   ): void {
     this.resetZones();
     ctx.save();
@@ -1440,54 +1509,48 @@ export class FlowScreens {
     ctx.textBaseline = "middle";
     ctx.fillText("CLOSE [ESC]", closeBtnX + closeBtnW / 2, closeBtnY + closeBtnH / 2);
 
-    // Two Tabs: COMBOS & TECHNIQUES vs TROPHIES & ACHIEVEMENTS
-    const tabW = 210;
+    // 4 Tabs: COMBOS, TROPHIES, HALL OF FAME, CLOUD & SAVE
+    const tabW = Math.min(150, (width - 40) / 4);
     const tabH = 30;
     const tabY = 56;
-    const tab1X = width / 2 - tabW - 8;
-    const tab2X = width / 2 + 8;
+    const tabSpacing = 6;
+    const totalTabW = tabW * 4 + tabSpacing * 3;
+    const tabStartX = (width - totalTabW) / 2;
 
-    this.clickZones.push({
-      id: "codex-tab-combos",
-      x: tab1X,
-      y: tabY,
-      w: tabW,
-      h: tabH,
-      action: () => { this.codexTab = "combos"; },
-    });
-    const isCombos = this.codexTab === "combos";
-    ctx.fillStyle = isCombos ? "rgba(59, 130, 246, 0.3)" : "rgba(15, 23, 42, 0.7)";
-    ctx.strokeStyle = isCombos ? THEME.flow : "rgba(255, 255, 255, 0.15)";
-    ctx.lineWidth = isCombos ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(tab1X, tabY, tabW, tabH, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.font = `bold ${isCombos ? "12px" : "11px"} system-ui, sans-serif`;
-    ctx.fillStyle = isCombos ? "#ffffff" : "#94a3b8";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("📖 COMBOS & TECHNIQUES", tab1X + tabW / 2, tabY + tabH / 2);
+    const tabs: { id: "combos" | "achievements" | "leaderboard" | "data"; label: string; color: string }[] = [
+      { id: "combos", label: "📖 COMBOS", color: THEME.flow },
+      { id: "achievements", label: `🏆 TROPHIES (${unlockedAchievements.length}/${ACHIEVEMENTS.length})`, color: "#fbbf24" },
+      { id: "leaderboard", label: "⚡ HALL OF FAME", color: THEME.precision },
+      { id: "data", label: "💾 DATA & BACKUP", color: THEME.momentum },
+    ];
 
-    this.clickZones.push({
-      id: "codex-tab-achievements",
-      x: tab2X,
-      y: tabY,
-      w: tabW,
-      h: tabH,
-      action: () => { this.codexTab = "achievements"; },
+    tabs.forEach((tab, idx) => {
+      const tx = tabStartX + idx * (tabW + tabSpacing);
+      const isSel = this.codexTab === tab.id;
+
+      this.clickZones.push({
+        id: `codex-tab-${tab.id}`,
+        x: tx,
+        y: tabY,
+        w: tabW,
+        h: tabH,
+        action: () => { this.codexTab = tab.id; },
+      });
+
+      ctx.fillStyle = isSel ? "rgba(30, 41, 59, 0.9)" : "rgba(15, 23, 42, 0.6)";
+      ctx.strokeStyle = isSel ? tab.color : "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = isSel ? 2 : 1;
+      ctx.beginPath();
+      ctx.roundRect(tx, tabY, tabW, tabH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.font = `bold ${isSel ? "11px" : "10px"} system-ui, sans-serif`;
+      ctx.fillStyle = isSel ? "#ffffff" : "#94a3b8";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(tab.label, tx + tabW / 2, tabY + tabH / 2);
     });
-    const isAchievements = this.codexTab === "achievements";
-    ctx.fillStyle = isAchievements ? "rgba(245, 158, 11, 0.3)" : "rgba(15, 23, 42, 0.7)";
-    ctx.strokeStyle = isAchievements ? "#fbbf24" : "rgba(255, 255, 255, 0.15)";
-    ctx.lineWidth = isAchievements ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(tab2X, tabY, tabW, tabH, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.font = `bold ${isAchievements ? "12px" : "11px"} system-ui, sans-serif`;
-    ctx.fillStyle = isAchievements ? "#ffffff" : "#94a3b8";
-    ctx.fillText(`🏆 TROPHIES (${unlockedAchievements.length} / ${ACHIEVEMENTS.length})`, tab2X + tabW / 2, tabY + tabH / 2);
 
     if (this.codexTab === "combos") {
       // Section 1: The 4 Legendary Combos
@@ -1623,6 +1686,146 @@ export class FlowScreens {
       });
     }
 
+    if (this.codexTab === "leaderboard") {
+      ctx.textAlign = "center";
+      ctx.fillStyle = THEME.precision;
+      ctx.font = "bold 14px system-ui, sans-serif";
+      ctx.fillText("⚡ LOCAL EXPEDITION HALL OF FAME & SPEEDRUN RECORDS", width / 2, 105);
+
+      if (!leaderboard || leaderboard.length === 0) {
+        ctx.fillStyle = "#64748b";
+        ctx.font = "13px system-ui, sans-serif";
+        ctx.fillText("No expeditions recorded yet. Complete an expedition to enshrine your score!", width / 2, 180);
+      } else {
+        const tableY = 125;
+        const rowH = 26;
+        const colWidths = [45, 90, 75, 50, 75, 55, 60, 65, 110];
+        const headers = ["#", "MODE", "FORM", "ASC", "SCORE", "KILLS", "CHAIN", "TIME", "DATE"];
+        const tableW = colWidths.reduce((a, b) => a + b, 0);
+        const startX = (width - tableW) / 2;
+
+        // Header Row
+        let hx = startX;
+        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+        ctx.fillRect(startX, tableY, tableW, rowH);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+        ctx.strokeRect(startX, tableY, tableW, rowH);
+
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.fillStyle = "#94a3b8";
+        ctx.textBaseline = "middle";
+        headers.forEach((h, idx) => {
+          ctx.textAlign = idx === 0 ? "center" : "left";
+          const px = idx === 0 ? hx + colWidths[idx]! / 2 : hx + 8;
+          ctx.fillText(h, px, tableY + rowH / 2);
+          hx += colWidths[idx]!;
+        });
+
+        // Entries (Top 10 display)
+        const entries = leaderboard.slice(0, 10);
+        entries.forEach((entry, rowIdx) => {
+          const ry = tableY + (rowIdx + 1) * rowH;
+          let rx = startX;
+
+          ctx.fillStyle = rowIdx % 2 === 0 ? "rgba(30, 41, 59, 0.4)" : "rgba(15, 23, 42, 0.6)";
+          ctx.fillRect(startX, ry, tableW, rowH);
+
+          const isTop3 = rowIdx < 3;
+          ctx.font = isTop3 ? "bold 11px monospace" : "11px monospace";
+          ctx.fillStyle = isTop3 ? "#fbbf24" : (entry.won ? THEME.healthGreen : "#cbd5e1");
+
+          const rowData = [
+            `#${rowIdx + 1}`,
+            entry.mode.toUpperCase(),
+            entry.form.toUpperCase(),
+            `A${entry.ascension}`,
+            entry.score.toLocaleString(),
+            `${entry.kills}`,
+            `${entry.longestChain}`,
+            `${(entry.durationMs / 1000).toFixed(1)}s`,
+            entry.date,
+          ];
+
+          rowData.forEach((val, cIdx) => {
+            ctx.textAlign = cIdx === 0 ? "center" : "left";
+            const px = cIdx === 0 ? rx + colWidths[cIdx]! / 2 : rx + 8;
+            ctx.fillText(val, px, ry + rowH / 2);
+            rx += colWidths[cIdx]!;
+          });
+        });
+      }
+    }
+
+    if (this.codexTab === "data") {
+      ctx.textAlign = "center";
+      ctx.fillStyle = THEME.precision;
+      ctx.font = "bold 14px system-ui, sans-serif";
+      ctx.fillText("💾 SAVE DATA BACKUP & CLOUD TRANSFER", width / 2, 110);
+
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillText("Backup your unlocked forms, achievements, and hall of fame records across devices.", width / 2, 134);
+
+      const boxW = Math.min(420, width - 60);
+      const boxH = 50;
+      const boxX = (width - boxW) / 2;
+
+      // Export Button
+      const expY = 170;
+      this.clickZones.push({
+        id: "save-export-btn",
+        x: boxX,
+        y: expY,
+        w: boxW,
+        h: boxH,
+        action: () => {
+          onExportSave?.();
+        },
+      });
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.strokeStyle = THEME.flow;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(boxX, expY, boxW, boxH, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillText("📋 EXPORT SAVE [COPY BACKUP STRING]", width / 2, expY + 20);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.fillText("Copies your entire game save string to your system clipboard", width / 2, expY + 36);
+
+      // Import Button
+      const impY = 236;
+      this.clickZones.push({
+        id: "save-import-btn",
+        x: boxX,
+        y: impY,
+        w: boxW,
+        h: boxH,
+        action: () => {
+          const code = prompt("Paste your exported save string here:");
+          if (code) {
+            onImportSave?.(code);
+          }
+        },
+      });
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.strokeStyle = THEME.precision;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(boxX, impY, boxW, boxH, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.fillText("📥 IMPORT SAVE [RESTORE FROM BACKUP]", width / 2, impY + 20);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.fillText("Restores your unlocks, Ascension rank, and trophies from backup", width / 2, impY + 36);
+    }
+
     ctx.restore();
   }
 
@@ -1664,7 +1867,8 @@ export class FlowScreens {
     height: number,
     run: RunState,
     isVictory: boolean,
-    onReturnTitle: () => void
+    onReturnTitle: () => void,
+    onReplay?: () => void
   ): void {
     this.resetZones();
     ctx.save();
@@ -1680,8 +1884,8 @@ export class FlowScreens {
     ctx.fillRect(0, 0, width, height);
 
     // Card Box
-    const cardW = Math.min(480, width - 40);
-    const cardH = 340;
+    const cardW = Math.min(500, width - 40);
+    const cardH = 370;
     const cardX = (width - cardW) / 2;
     const cardY = (height - cardH) / 2;
 
@@ -1697,7 +1901,7 @@ export class FlowScreens {
     ctx.textAlign = "center";
     ctx.font = "900 28px system-ui, sans-serif";
     ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.healthRed;
-    ctx.fillText(isVictory ? "✦ EXPEDITION CONQUERED ✦" : "✦ EXPEDITION TERMINATED ✦", width / 2, cardY + 48);
+    ctx.fillText(isVictory ? "✦ EXPEDITION CONQUERED ✦" : "✦ EXPEDITION TERMINATED ✦", width / 2, cardY + 44);
 
     // Subtitle
     ctx.font = "13px system-ui, sans-serif";
@@ -1705,54 +1909,127 @@ export class FlowScreens {
     const sub = isVictory
       ? (run.mode === "endless" ? `Endless Abyss reached Depth ${run.endlessDepth}!` : `Act 3 Boss Defeated on Ascension ${run.ascension}!`)
       : `Fell in Act ${run.act} (Ascension ${run.ascension})`;
-    ctx.fillText(sub, width / 2, cardY + 76);
+    ctx.fillText(sub, width / 2, cardY + 70);
+
+    // Score Banner
+    const score = (run.stats.kills * 150) + (run.stats.longestChain * 300) + (isVictory ? 5000 : 0) + (run.ascension * 400);
+    ctx.font = "bold 15px system-ui, sans-serif";
+    ctx.fillStyle = "#fbbf24";
+    ctx.fillText(`EXPEDITION SCORE: ${score.toLocaleString()}`, width / 2, cardY + 95);
 
     // Stats Grid
-    const statY = cardY + 115;
+    const statY = cardY + 128;
     ctx.font = "12px monospace";
     ctx.fillStyle = "#cbd5e1";
     ctx.fillText(`KILLS: ${run.stats.kills}`, width / 2 - 100, statY);
     ctx.fillText(`FIGHTS WON: ${run.stats.fightsWon}`, width / 2 + 100, statY);
-    ctx.fillText(`LONGEST CHAIN: ${run.stats.longestChain}`, width / 2 - 100, statY + 28);
-    ctx.fillText(`PARRIES: ${run.stats.parries}`, width / 2 + 100, statY + 28);
-    ctx.fillText(`STAGGERS: ${run.stats.staggers}`, width / 2 - 100, statY + 56);
-    ctx.fillText(`CRITS: ${run.stats.crits}`, width / 2 + 100, statY + 56);
+    ctx.fillText(`LONGEST CHAIN: ${run.stats.longestChain}`, width / 2 - 100, statY + 26);
+    ctx.fillText(`PARRIES: ${run.stats.parries}`, width / 2 + 100, statY + 26);
+    ctx.fillText(`STAGGERS: ${run.stats.staggers}`, width / 2 - 100, statY + 52);
+    ctx.fillText(`CRITS: ${run.stats.crits}`, width / 2 + 100, statY + 52);
+
+    // Seed with Copy Button
+    const seedY = cardY + 232;
+    ctx.font = "11px monospace";
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText(`SEED: ${run.seed} [📋 CLICK TO COPY]`, width / 2, seedY);
+
+    this.clickZones.push({
+      id: "summary-copy-seed",
+      x: width / 2 - 140,
+      y: seedY - 12,
+      w: 280,
+      h: 22,
+      action: () => {
+        if (typeof navigator !== "undefined" && navigator.clipboard) {
+          navigator.clipboard.writeText(run.seed);
+        }
+      },
+    });
 
     // Unlocks / Progression note
     if (isVictory) {
       ctx.font = "bold 12px system-ui, sans-serif";
       ctx.fillStyle = THEME.precision;
       if (run.ascension < 10) {
-        ctx.fillText(`★ UNLOCKED: Ascension ${run.ascension + 1} difficulty tier!`, width / 2, cardY + 225);
+        ctx.fillText(`★ UNLOCKED: Ascension ${run.ascension + 1} difficulty tier!`, width / 2, cardY + 262);
       } else {
-        ctx.fillText("★ MAXIMUM ASCENSION (A10) CLEARED! MASTER OF THE TRAIL!", width / 2, cardY + 225);
+        ctx.fillText("★ MAXIMUM ASCENSION (A10) CLEARED! MASTER OF THE TRAIL!", width / 2, cardY + 262);
       }
     }
 
-    // Return to Title button
-    const btnW = 240;
-    const btnH = 42;
-    const btnX = (width - btnW) / 2;
-    const btnY = cardY + cardH - 65;
+    // Buttons at bottom (Replay & Return)
+    const btnH = 40;
+    const btnY = cardY + cardH - 58;
 
-    this.clickZones.push({
-      id: "summary-title-btn",
-      x: btnX,
-      y: btnY,
-      w: btnW,
-      h: btnH,
-      action: onReturnTitle,
-    });
+    if (onReplay) {
+      const replayW = 160;
+      const returnW = 190;
+      const spacing = 14;
+      const totalBtnW = replayW + returnW + spacing;
+      const startBtnX = (width - totalBtnW) / 2;
 
-    ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.precision;
-    ctx.beginPath();
-    ctx.roundRect(btnX, btnY, btnW, btnH, 8);
-    ctx.fill();
+      // Replay Button
+      this.clickZones.push({
+        id: "summary-replay-btn",
+        x: startBtnX,
+        y: btnY,
+        w: replayW,
+        h: btnH,
+        action: onReplay,
+      });
+      ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+      ctx.strokeStyle = THEME.flow;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(startBtnX, btnY, replayW, btnH, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText("🔁 REPLAY RUN", startBtnX + replayW / 2, btnY + btnH / 2);
 
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText("RETURN TO TITLE [SPACE / TAP]", btnX + btnW / 2, btnY + btnH / 2);
+      // Return Button
+      const retX = startBtnX + replayW + spacing;
+      this.clickZones.push({
+        id: "summary-title-btn",
+        x: retX,
+        y: btnY,
+        w: returnW,
+        h: btnH,
+        action: onReturnTitle,
+      });
+      ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.precision;
+      ctx.beginPath();
+      ctx.roundRect(retX, btnY, returnW, btnH, 8);
+      ctx.fill();
+      ctx.fillStyle = "#000000";
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.fillText("RETURN TO TITLE", retX + returnW / 2, btnY + btnH / 2);
+    } else {
+      const btnW = 240;
+      const btnX = (width - btnW) / 2;
+
+      this.clickZones.push({
+        id: "summary-title-btn",
+        x: btnX,
+        y: btnY,
+        w: btnW,
+        h: btnH,
+        action: onReturnTitle,
+      });
+
+      ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.precision;
+      ctx.beginPath();
+      ctx.roundRect(btnX, btnY, btnW, btnH, 8);
+      ctx.fill();
+
+      ctx.fillStyle = "#000000";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.fillText("RETURN TO TITLE [SPACE / TAP]", btnX + btnW / 2, btnY + btnH / 2);
+    }
 
     ctx.restore();
   }

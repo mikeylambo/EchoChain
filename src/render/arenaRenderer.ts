@@ -31,7 +31,7 @@ export class ArenaRenderer {
   private phaseAlertText = "";
   private flashAlpha = 0;
 
-  update(world: World, dt: number, vfx: VfxEngine, audio?: SoundEngine): void {
+  update(world: World, dt: number, vfx: VfxEngine, audio?: SoundEngine, gamepad?: { rumble: (w: number, s: number, d: number) => void }): void {
     // Smooth camera track on fighter with forward anticipation
     const targetLead = 180;
     this.camera.targetX = world.fighter.x + targetLead;
@@ -49,18 +49,19 @@ export class ArenaRenderer {
       this.bossIntroTimer = 3.2;
       audio?.bossIntro();
       vfx.shake(this.camera, 14, 0.5);
+      gamepad?.rumble(0.7, 0.9, 300);
     } else if (!world.boss) {
       this.activeBossId = null;
     }
 
     // Detect new sim events for visual triggers and audio playback
-    this.processSimEvents(world, vfx, audio);
+    this.processSimEvents(world, vfx, audio, gamepad);
 
     this.prevFighterX = world.fighter.x;
     this.lastObservedOutcome = world.outcome;
   }
 
-  private processSimEvents(world: World, vfx: VfxEngine, audio?: SoundEngine): void {
+  private processSimEvents(world: World, vfx: VfxEngine, audio?: SoundEngine, gamepad?: { rumble: (w: number, s: number, d: number) => void }): void {
     // Process sim fx queue
     while (world.fx.length > 0) {
       const fx = world.fx.shift()!;
@@ -71,23 +72,33 @@ export class ArenaRenderer {
             vfx.shake(this.camera, 6, 0.2);
             vfx.addText(fx.x, this.groundY - 60, `CRIT ${Math.round(fx.dmg)}`, THEME.precision, 20, true);
             audio?.hit(true);
+            gamepad?.rumble(0.4, 0.6, 60);
           } else {
             vfx.burst(fx.x, this.groundY - 30, THEME.fighter, 8, 90);
             vfx.addText(fx.x, this.groundY - 50, `${Math.round(fx.dmg)}`, "#ffffff", 14);
             audio?.hit(false);
+            gamepad?.rumble(0.2, 0.1, 35);
           }
+          break;
+        case "hurt":
+          vfx.addText(world.fighter.x, this.groundY - 55, `-${Math.round(fx.dmg)}`, THEME.healthRed, 18, true);
+          vfx.shake(this.camera, 10, 0.3);
+          audio?.hit(false);
+          gamepad?.rumble(0.6, 0.8, 140);
           break;
         case "parry":
           vfx.burst(fx.x, this.groundY - 35, THEME.flow, 18, 140);
           vfx.shake(this.camera, 8, 0.25);
           vfx.addText(fx.x, this.groundY - 60, "PARRY", THEME.flow, 18, true);
           audio?.parry();
+          gamepad?.rumble(0.6, 0.4, 90);
           break;
         case "slam":
         case "launch":
           vfx.burst(fx.x, this.groundY - 30, THEME.momentum, 14, 130);
           vfx.addText(fx.x, this.groundY - 55, fx.k.toUpperCase(), THEME.momentum, 16);
           audio?.stagger();
+          gamepad?.rumble(0.5, 0.7, 100);
           break;
         case "note":
         case "chain":
@@ -207,6 +218,25 @@ export class ArenaRenderer {
     if (this.phaseAlertTimer > 0) {
       this.renderPhaseAlertBanner(ctx, width, height);
     }
+
+    // 9. Low-Health Pulsing Heartbeat Vignette
+    this.renderLowHealthVignette(ctx, world, width, height);
+  }
+
+  private renderLowHealthVignette(ctx: CanvasRenderingContext2D, world: World, width: number, height: number): void {
+    const f = world.fighter;
+    if (f.hp <= 0 || f.hp > f.maxHp * 0.35) return;
+    const severity = 1 - (f.hp / (f.maxHp * 0.35)); // 0..1
+    const pulse = Math.sin(world.tick * 0.12) * 0.5 + 0.5; // Heartbeat sine wave
+    const alpha = (0.18 + severity * 0.38) * (0.6 + pulse * 0.4);
+
+    ctx.save();
+    const grad = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.35, width / 2, height / 2, Math.max(width, height) * 0.65);
+    grad.addColorStop(0, "rgba(220, 38, 38, 0)");
+    grad.addColorStop(1, `rgba(220, 38, 38, ${alpha})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
   }
 
   private renderEnvironment(ctx: CanvasRenderingContext2D, world: World, viewportWidth: number): void {
@@ -452,6 +482,17 @@ export class ArenaRenderer {
         ctx.beginPath();
         ctx.ellipse(0, 0, e.range * pulse * 0.45, 10, 0, 0, Math.PI * 2);
         ctx.stroke();
+
+        // Directional charging strike hazard cone pointing left toward player
+        const coneW = Math.min(180, e.range * 0.9);
+        const fillAlpha = Math.min(0.4, (e.windupT % 0.5) * 0.8 + 0.1);
+        ctx.fillStyle = isBoss ? `rgba(239, 68, 68, ${fillAlpha})` : `rgba(249, 115, 22, ${fillAlpha})`;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-coneW, -14);
+        ctx.lineTo(-coneW, 14);
+        ctx.closePath();
+        ctx.fill();
 
         // Warning Flare Beacon overhead
         ctx.fillStyle = col;

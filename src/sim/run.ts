@@ -3,6 +3,7 @@ import { FORMS, type FormId } from "../data/forms";
 import { aggregateMods, SEAL, SEALS } from "../data/seals";
 import { TECH } from "../data/techniques";
 import { TUNING } from "../data/tuning";
+import type { RelicId } from "../data/relics";
 import type { TrailSlot } from "./chain";
 import { bossPlan, elitePlan, planFight } from "./enemies";
 import { analyzeTrail } from "./links";
@@ -61,13 +62,15 @@ export interface RunState {
   seed: string;
   form: FormId;
   ascension: number;
-  mode: "standard" | "endless";
+  mode: "standard" | "endless" | "daily";
+  dailyMutator?: string;
   act: number;
   step: number;
   acts: MapStep[][];
   trail: TrailSlot[];
   slots: number;
   seals: string[];
+  relics: RelicId[];
   hp: number;
   maxHp: number;
   draftRng: number;
@@ -112,19 +115,44 @@ function buildAct(rng: DeterministicRng, act: number, asc: number): MapStep[] {
   return [one(f0), fork(f1a, f1b), special, one(f2), fork(f3a, f3b), one(end)];
 }
 
-export function newRun(seed: string, form: FormId, ascension: number, mode: "standard" | "endless", unlocked: string[]): RunState {
+export function newRun(
+  seed: string,
+  form: FormId,
+  ascension: number,
+  mode: "standard" | "endless" | "daily",
+  unlocked: string[],
+  dailyMutator?: string
+): RunState {
+  const resolvedMutator = dailyMutator ?? (mode === "daily" ? "glass_cannon" : undefined);
   const mapRng = streamFor(seed, "map");
-  const acts = mode === "standard" ? [1, 2, 3].map((a) => buildAct(mapRng, a, ascension)) : [];
+  const acts = (mode === "standard" || mode === "daily") ? [1, 2, 3].map((a) => buildAct(mapRng, a, ascension)) : [];
   const f = FORMS[form];
+  let hp = f.hp;
+  let maxHp = f.hp;
+  if (resolvedMutator === "glass_cannon") {
+    hp = Math.round(hp * 0.5);
+    maxHp = Math.round(maxHp * 0.5);
+  }
   const run: RunState = {
-    version: 1, seed, form, ascension, mode, act: 1, step: 0, acts,
-    trail: [], slots: f.startSlots, seals: [], hp: f.hp, maxHp: f.hp,
+    version: 1, seed, form, ascension, mode, dailyMutator: resolvedMutator, act: 1, step: 0, acts,
+    trail: [], slots: f.startSlots, seals: [], relics: [], hp, maxHp,
     draftRng: streamFor(seed, "draft").state, mapRng: mapRng.state,
     fightIndex: 0, stats: emptyRunStats(), choices: [], distance: 0, endlessDepth: 0, pendingEcho: null, status: "map",
     unlocked: [...unlocked],
   };
   if (mode === "endless") run.acts = [[endlessStep(run)]];
   return run;
+}
+
+export function addRelic(run: RunState, relic: RelicId): void {
+  if (!run.relics) run.relics = [];
+  if (!run.relics.includes(relic)) {
+    run.relics.push(relic);
+    if (relic === "iron_pact") {
+      run.maxHp += 25;
+      run.hp += 25;
+    }
+  }
 }
 
 function endlessStep(run: RunState): MapStep {
@@ -163,7 +191,11 @@ export function chooseFork(run: RunState, i: number): MapNode {
 }
 
 export function runMods(run: RunState) {
-  return aggregateMods(run.seals);
+  const mods = aggregateMods(run.seals);
+  if (run.dailyMutator === "glass_cannon") {
+    return { ...mods, damageMult: mods.damageMult * 1.75 };
+  }
+  return mods;
 }
 
 export function capSlots(run: RunState): number {
@@ -186,6 +218,8 @@ export function fightConfig(run: RunState, node: MapNode): FightConfig {
     maxHp: run.maxHp,
     ascension: run.ascension,
     endlessScale: run.mode === "endless" ? 1 + run.endlessDepth * 0.1 : 1,
+    relics: [...(run.relics ?? [])],
+    dailyMutator: run.dailyMutator,
   };
 }
 
@@ -289,7 +323,8 @@ export function makeDraft(run: RunState): DraftCard[] {
   const cards: DraftCard[] = [];
   const used = new Set<string>();
   const W = TUNING.draftWeights;
-  for (let n = 0; n < 3; n++) {
+  const draftChoiceCount = run.relics?.includes("abyssal_compass") ? 4 : 3;
+  for (let n = 0; n < draftChoiceCount; n++) {
     const kinds: ("echo" | "rank" | "seal")[] = [];
     const weights: number[] = [];
     if (echoPool.some((id) => !used.has(id))) { kinds.push("echo"); weights.push(W.echo); }

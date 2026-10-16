@@ -4,6 +4,7 @@ import { TECHNIQUES, type TechniqueDef } from "../data/techniques";
 import { TUNING } from "../data/tuning";
 import { THEME, familyColor } from "./types";
 import { BOSSES } from "../data/bosses";
+import { RELICS } from "../data/relics";
 
 const TECH_MAP = new Map<string, TechniqueDef>(TECHNIQUES.map((t) => [t.id, t]));
 
@@ -165,6 +166,29 @@ export class HudRenderer {
     ctx.textBaseline = "middle";
     ctx.fillText(`${Math.round(f.hp)} / ${f.maxHp} HP`, pad + hpBarW / 2, topY + hpBarH / 2);
 
+    // Relic Shelf under HP bar
+    if (run.relics && run.relics.length > 0) {
+      const relicY = topY + hpBarH + 6;
+      let rx = pad;
+      for (const rid of run.relics) {
+        const rdef = RELICS[rid];
+        if (!rdef) continue;
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(rx, relicY, 22, 22, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.font = "13px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(rdef.icon, rx + 11, relicY + 11);
+        rx += 26;
+      }
+    }
+
     // Center Display: Boss Bar vs Standard Encounter Title
     if (world.boss) {
       this.renderBossBar(ctx, world, width);
@@ -172,9 +196,13 @@ export class HudRenderer {
       ctx.font = "bold 14px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillStyle = "#f3f4f6";
-      const encounterTitle = run.mode === "endless"
-        ? `ENDLESS ABYSS — DEPTH ${run.endlessDepth + 1}`
-        : `ACT ${world.cfg.act} — ENCOUNTER ${run.fightIndex + 1}`;
+      let encounterTitle = `ACT ${world.cfg.act} — ENCOUNTER ${run.fightIndex + 1}`;
+      if (run.mode === "endless") {
+        encounterTitle = `ENDLESS ABYSS — DEPTH ${run.endlessDepth + 1}`;
+      } else if (run.mode === "daily") {
+        const mutLabel = run.dailyMutator ? run.dailyMutator.toUpperCase().replace("_", " ") : "STANDARD";
+        encounterTitle = `DAILY CHALLENGE [${mutLabel}] — ${run.fightIndex + 1}`;
+      }
       ctx.fillText(encounterTitle, width / 2, topY + 8);
 
       ctx.font = "11px system-ui, sans-serif";
