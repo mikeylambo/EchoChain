@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc -p vendor/web-shell/tsconfig.json && tsc --noEmit && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "sim": "tsx src/debug/headless.ts",

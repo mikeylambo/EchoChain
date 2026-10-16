@@ -9,7 +9,12 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@slu/web-shell": ["./vendor/web-shell/dist/index.d.ts", "./vendor/web-shell/src/index.ts"],
+      "@slu/web-shell/*": ["./vendor/web-shell/dist/*", "./vendor/web-shell/src/*"]
+    }
   },
   "include": ["src/**/*.ts"]
 }
