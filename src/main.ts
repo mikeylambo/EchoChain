@@ -72,13 +72,12 @@ class EchoChainGame {
     requestAnimationFrame(this.loop.bind(this));
   }
 
-  private startExpedition(form: FormId): void {
+  private startExpedition(form: FormId, ascension = 0, mode: "standard" | "endless" = "standard"): void {
     this.sound.init();
     this.sound.uiClick();
 
     const seed = `run-${Date.now().toString(36)}`;
-    const saved = this.saveManager.get();
-    this.run = newRun(seed, form, saved.highestAscension, "standard", [...STARTER_TECHS]);
+    this.run = newRun(seed, form, ascension, mode, [...STARTER_TECHS]);
 
     // Opening draft
     this.draftCards = makeOpeningDraft(this.run);
@@ -106,13 +105,13 @@ class EchoChainGame {
       this.sound.stopAmbientDrone();
       this.screen = "victory";
       this.sound.victory();
-      this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act);
+      this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act, this.run.ascension, this.run.mode);
       return;
     }
     if (this.run.status === "lost") {
       this.sound.stopAmbientDrone();
       this.screen = "game_over";
-      this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, false, this.run.act);
+      this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, false, this.run.act, this.run.ascension, this.run.mode);
       return;
     }
 
@@ -149,7 +148,7 @@ class EchoChainGame {
         this.sound.stopAmbientDrone();
         this.screen = "victory";
         this.sound.victory();
-        this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act);
+        this.saveManager.recordRunEnd(this.run.stats.kills, this.run.stats.longestChain, true, this.run.act, this.run.ascension, this.run.mode);
       } else {
         this.draftCards = makeDraft(this.run);
         this.isOpeningDraft = false;
@@ -157,7 +156,7 @@ class EchoChainGame {
       }
     } else if (this.world.outcome === "lost") {
       this.sound.stopAmbientDrone();
-      this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act);
+      this.saveManager.recordRunEnd(this.world.stats.kills, this.world.stats.longestChain, false, this.run.act, this.run.ascension, this.run.mode);
       this.screen = "title";
     }
   }
@@ -228,6 +227,17 @@ class EchoChainGame {
         e.preventDefault();
         this.sound.stopAmbientDrone();
         this.screen = "title";
+      } else if (e.code === "ArrowLeft" && this.screen === "title") {
+        if (this.screens.selectedAscension > 0) {
+          this.screens.selectedAscension--;
+          this.sound.uiClick();
+        }
+      } else if (e.code === "ArrowRight" && this.screen === "title") {
+        const maxAsc = Math.min(10, this.saveManager.get().highestAscension);
+        if (this.screens.selectedAscension < maxAsc) {
+          this.screens.selectedAscension++;
+          this.sound.uiClick();
+        }
       }
     });
 
@@ -283,7 +293,7 @@ class EchoChainGame {
 
   private handleSpaceKey(): void {
     if (this.screen === "title") {
-      this.startExpedition(this.screens.selectedForm);
+      this.startExpedition(this.screens.selectedForm, this.screens.selectedAscension, this.screens.selectedMode);
     } else if (this.screen === "combat") {
       if (this.world.outcome !== "running") {
         this.advanceEncounter();
@@ -292,6 +302,8 @@ class EchoChainGame {
       }
     } else if (this.screen === "organizer") {
       this.checkNextStep();
+    } else if (this.screen === "victory" || this.screen === "game_over") {
+      this.screen = "title";
     }
   }
 
@@ -337,11 +349,14 @@ class EchoChainGame {
     const h = window.innerHeight;
 
     if (this.screen === "title") {
+      const saved = this.saveManager.get();
       this.screens.renderTitle(
         this.ctx,
         w,
         h,
-        (form) => this.startExpedition(form),
+        saved.unlockedForms,
+        saved.highestAscension,
+        (form, ascension, mode) => this.startExpedition(form, ascension, mode),
         () => {
           this.previousScreen = "title";
           this.screen = "codex";
@@ -485,7 +500,17 @@ class EchoChainGame {
         this.screen = this.previousScreen;
       });
     } else if (this.screen === "victory" || this.screen === "game_over") {
-      this.screens.renderTitle(this.ctx, w, h, (form) => this.startExpedition(form));
+      this.screens.renderRunSummary(
+        this.ctx,
+        w,
+        h,
+        this.run,
+        this.screen === "victory",
+        () => {
+          this.sound.uiClick();
+          this.screen = "title";
+        }
+      );
     }
 
     requestAnimationFrame(this.loop.bind(this));

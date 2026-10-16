@@ -6,6 +6,7 @@ import type { DraftCard, MapNode, RunState } from "../sim/run";
 import { THEME, familyColor } from "../render/types";
 import { GDD_COMBOS } from "../debug/combos";
 import type { GameSettings } from "../storage/saveData";
+import { ASCENSIONS } from "../data/bosses";
 
 export type ScreenState =
   | "title"
@@ -32,6 +33,8 @@ export interface ClickZone {
 export class FlowScreens {
   clickZones: ClickZone[] = [];
   selectedForm: FormId = "duelist";
+  selectedMode: "standard" | "endless" = "standard";
+  selectedAscension = 0;
 
   resetZones(): void {
     this.clickZones = [];
@@ -54,11 +57,23 @@ export class FlowScreens {
     ctx: CanvasRenderingContext2D,
     width: number,
     height: number,
-    onStart: (form: FormId) => void,
+    unlockedForms: FormId[],
+    highestAscension: number,
+    onStart: (form: FormId, ascension: number, mode: "standard" | "endless") => void,
     onOpenCodex?: () => void
   ): void {
     this.resetZones();
     ctx.save();
+
+    // Ensure selectedForm is unlocked; if not, default to first unlocked form
+    if (!unlockedForms.includes(this.selectedForm)) {
+      this.selectedForm = unlockedForms[0] ?? "duelist";
+    }
+
+    // Ensure selectedAscension does not exceed highestAscension
+    if (this.selectedAscension > highestAscension) {
+      this.selectedAscension = highestAscension;
+    }
 
     // Dark ink backdrop with subtle center bloom
     ctx.fillStyle = THEME.bgDark;
@@ -73,16 +88,16 @@ export class FlowScreens {
     // Title
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffffff";
-    ctx.font = "900 44px system-ui, sans-serif";
+    ctx.font = "900 42px system-ui, sans-serif";
     ctx.shadowColor = "rgba(255, 255, 255, 0.35)";
     ctx.shadowBlur = 16;
-    ctx.fillText("ECHO CHAIN", width / 2, height * 0.18);
+    ctx.fillText("ECHO CHAIN", width / 2, height * 0.11);
     ctx.shadowBlur = 0;
 
     // Subtitle
     ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-    ctx.font = "14px system-ui, sans-serif";
-    ctx.fillText("A KINETIC ROGUE-LITE", width / 2, height * 0.23);
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillText("A KINETIC ROGUE-LITE", width / 2, height * 0.15);
 
     // Codex Button in top right
     if (onOpenCodex) {
@@ -115,77 +130,268 @@ export class FlowScreens {
       ctx.fillText("📖 CODEX", codexBtnX + codexBtnW / 2, codexBtnY + codexBtnH / 2);
     }
 
-    // Prompt
+    // ── GAME MODE TOGGLE ──────────────────────────────────
+    const modeY = height * 0.19;
+    const modeW = 170;
+    const modeH = 32;
+    const modeSpacing = 12;
+    const totalModeW = modeW * 2 + modeSpacing;
+    const standardX = (width - totalModeW) / 2;
+    const endlessX = standardX + modeW + modeSpacing;
+
+    // Standard Mode Button
+    const isStandard = this.selectedMode === "standard";
+    this.clickZones.push({
+      id: "mode-standard",
+      x: standardX,
+      y: modeY,
+      w: modeW,
+      h: modeH,
+      action: () => { this.selectedMode = "standard"; },
+    });
+    ctx.fillStyle = isStandard ? "rgba(59, 130, 246, 0.25)" : "rgba(15, 23, 42, 0.7)";
+    ctx.strokeStyle = isStandard ? THEME.flow : "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = isStandard ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(standardX, modeY, modeW, modeH, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = isStandard ? "#ffffff" : "#94a3b8";
+    ctx.font = `bold ${isStandard ? "12px" : "11px"} system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("⚔️ 3-ACT EXPEDITION", standardX + modeW / 2, modeY + modeH / 2);
+
+    // Endless Mode Button
+    const isEndless = this.selectedMode === "endless";
+    this.clickZones.push({
+      id: "mode-endless",
+      x: endlessX,
+      y: modeY,
+      w: modeW,
+      h: modeH,
+      action: () => { this.selectedMode = "endless"; },
+    });
+    ctx.fillStyle = isEndless ? "rgba(168, 85, 247, 0.25)" : "rgba(15, 23, 42, 0.7)";
+    ctx.strokeStyle = isEndless ? THEME.momentum : "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = isEndless ? 2 : 1;
+    ctx.beginPath();
+    ctx.roundRect(endlessX, modeY, modeW, modeH, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = isEndless ? "#ffffff" : "#94a3b8";
+    ctx.font = `bold ${isEndless ? "12px" : "11px"} system-ui, sans-serif`;
+    ctx.fillText("♾️ ENDLESS ABYSS", endlessX + modeW / 2, modeY + modeH / 2);
+
+    // ── ASCENSION SELECTOR (STANDARD MODE ONLY) ───────────
+    if (this.selectedMode === "standard") {
+      const ascY = height * 0.255;
+      const ascBoxW = 280;
+      const ascBoxH = 34;
+      const ascBoxX = (width - ascBoxW) / 2;
+
+      // Left Arrow
+      const arrowW = 34;
+      const canDec = this.selectedAscension > 0;
+      if (canDec) {
+        this.clickZones.push({
+          id: "asc-dec",
+          x: ascBoxX,
+          y: ascY,
+          w: arrowW,
+          h: ascBoxH,
+          action: () => {
+            if (this.selectedAscension > 0) this.selectedAscension--;
+          },
+        });
+      }
+      ctx.fillStyle = canDec ? "rgba(30, 41, 59, 0.85)" : "rgba(15, 23, 42, 0.4)";
+      ctx.strokeStyle = canDec ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.05)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(ascBoxX, ascY, arrowW, ascBoxH, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = canDec ? "#ffffff" : "#475569";
+      ctx.font = "bold 15px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("◀", ascBoxX + arrowW / 2, ascY + ascBoxH / 2);
+
+      // Ascension Display Center
+      const dispX = ascBoxX + arrowW + 8;
+      const dispW = ascBoxW - arrowW * 2 - 16;
+      ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
+      ctx.strokeStyle = this.selectedAscension > 0 ? THEME.precision : "rgba(255, 255, 255, 0.15)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(dispX, ascY, dispW, ascBoxH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = this.selectedAscension > 0 ? THEME.precision : "#ffffff";
+      ctx.font = "bold 13px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const ascLabel = this.selectedAscension === 0 ? "STANDARD DIFFICULTY" : `ASCENSION ${this.selectedAscension}`;
+      ctx.fillText(ascLabel, dispX + dispW / 2, ascY + ascBoxH / 2);
+
+      // Right Arrow
+      const rightX = ascBoxX + ascBoxW - arrowW;
+      const canInc = this.selectedAscension < Math.min(10, highestAscension);
+      if (canInc) {
+        this.clickZones.push({
+          id: "asc-inc",
+          x: rightX,
+          y: ascY,
+          w: arrowW,
+          h: ascBoxH,
+          action: () => {
+            if (this.selectedAscension < Math.min(10, highestAscension)) {
+              this.selectedAscension++;
+            }
+          },
+        });
+      }
+      ctx.fillStyle = canInc ? "rgba(30, 41, 59, 0.85)" : "rgba(15, 23, 42, 0.4)";
+      ctx.strokeStyle = canInc ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.05)";
+      ctx.beginPath();
+      ctx.roundRect(rightX, ascY, arrowW, ascBoxH, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = canInc ? "#ffffff" : "#475569";
+      ctx.font = "bold 15px system-ui, sans-serif";
+      ctx.fillText("▶", rightX + arrowW / 2, ascY + ascBoxH / 2);
+
+      // Modifier Description
+      ctx.textAlign = "center";
+      ctx.font = "11px system-ui, sans-serif";
+      if (this.selectedAscension === 0) {
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText("Standard encounters (Beating Act 3 unlocks Ascension 1)", width / 2, ascY + ascBoxH + 16);
+      } else {
+        const desc = ASCENSIONS[this.selectedAscension - 1]?.desc ?? "";
+        ctx.fillStyle = THEME.precision;
+        ctx.fillText(`A${this.selectedAscension}: ${desc} (Cumulative)`, width / 2, ascY + ascBoxH + 16);
+      }
+    } else {
+      // Endless description
+      const ascY = height * 0.255;
+      ctx.textAlign = "center";
+      ctx.font = "12px system-ui, sans-serif";
+      ctx.fillStyle = THEME.momentum;
+      ctx.fillText("Infinite Depth • Escalating Enemy Density • True Trial of the Echo Trail", width / 2, ascY + 20);
+    }
+
+    // ── FORM SELECTION PROMPT ─────────────────────────────
     ctx.textAlign = "center";
     ctx.fillStyle = "#e2e8f0";
     ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.fillText("SELECT YOUR COMBAT FORM", width / 2, height * 0.32);
+    ctx.fillText("SELECT YOUR COMBAT FORM", width / 2, height * 0.35);
 
-    // 3 Form Cards
+    // ── 3 FORM CARDS ──────────────────────────────────────
     const cardW = Math.min(220, (width - 60) / 3);
     const cardH = 210;
     const spacing = 16;
     const totalW = 3 * cardW + 2 * spacing;
     const startX = (width - totalW) / 2;
-    const startY = height * 0.38;
+    const startY = height * 0.39;
 
     FORM_LIST.forEach((formId, i) => {
       const def = FORMS[formId];
-      const isSelected = this.selectedForm === formId;
+      const isUnlocked = unlockedForms.includes(formId);
+      const isSelected = this.selectedForm === formId && isUnlocked;
       const x = startX + i * (cardW + spacing);
       const y = startY;
 
-      // Register click zone
-      this.clickZones.push({
-        id: `form-${formId}`,
-        x,
-        y,
-        w: cardW,
-        h: cardH,
-        action: () => { this.selectedForm = formId; },
-      });
+      // Register click zone only if unlocked
+      if (isUnlocked) {
+        this.clickZones.push({
+          id: `form-${formId}`,
+          x,
+          y,
+          w: cardW,
+          h: cardH,
+          action: () => { this.selectedForm = formId; },
+        });
+      }
 
       // Card Background
-      ctx.fillStyle = isSelected ? "rgba(30, 41, 59, 0.95)" : "rgba(15, 23, 42, 0.8)";
-      ctx.strokeStyle = isSelected ? THEME.precision : "rgba(255, 255, 255, 0.15)";
-      ctx.lineWidth = isSelected ? 2.5 : 1;
-      ctx.beginPath();
-      ctx.roundRect(x, y, cardW, cardH, 10);
-      ctx.fill();
-      ctx.stroke();
+      if (isUnlocked) {
+        ctx.fillStyle = isSelected ? "rgba(30, 41, 59, 0.95)" : "rgba(15, 23, 42, 0.8)";
+        ctx.strokeStyle = isSelected ? THEME.precision : "rgba(255, 255, 255, 0.15)";
+        ctx.lineWidth = isSelected ? 2.5 : 1;
+        ctx.beginPath();
+        ctx.roundRect(x, y, cardW, cardH, 10);
+        ctx.fill();
+        ctx.stroke();
 
-      // Card Title
-      ctx.textAlign = "center";
-      ctx.font = "bold 18px system-ui, sans-serif";
-      ctx.fillStyle = isSelected ? THEME.precision : "#ffffff";
-      ctx.fillText(def.name.toUpperCase(), x + cardW / 2, y + 36);
+        // Card Title
+        ctx.textAlign = "center";
+        ctx.font = "bold 18px system-ui, sans-serif";
+        ctx.fillStyle = isSelected ? THEME.precision : "#ffffff";
+        ctx.fillText(def.name.toUpperCase(), x + cardW / 2, y + 36);
 
-      // Description
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillText(def.desc, x + cardW / 2, y + 62);
+        // Description
+        ctx.font = "12px system-ui, sans-serif";
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText(def.desc, x + cardW / 2, y + 62);
 
-      // Stats
-      ctx.font = "11px monospace";
-      ctx.fillStyle = "#cbd5e1";
-      ctx.fillText(`HP: ${def.hp}`, x + cardW / 2, y + 100);
-      ctx.fillText(`Interval: ${def.interval}s`, x + cardW / 2, y + 122);
-      ctx.fillText(`Crit Rate: ${Math.round(def.crit * 100)}%`, x + cardW / 2, y + 144);
-      ctx.fillText(`Echo Slots: ${def.startSlots}`, x + cardW / 2, y + 166);
+        // Stats
+        ctx.font = "11px monospace";
+        ctx.fillStyle = "#cbd5e1";
+        ctx.fillText(`HP: ${def.hp}`, x + cardW / 2, y + 100);
+        ctx.fillText(`Interval: ${def.interval}s`, x + cardW / 2, y + 122);
+        ctx.fillText(`Crit Rate: ${Math.round(def.crit * 100)}%`, x + cardW / 2, y + 144);
+        ctx.fillText(`Echo Slots: ${def.startSlots}`, x + cardW / 2, y + 166);
 
-      // Selected Tag
-      if (isSelected) {
-        ctx.fillStyle = THEME.precision;
-        ctx.font = "bold 11px system-ui, sans-serif";
-        ctx.fillText("✓ SELECTED", x + cardW / 2, y + 192);
+        // Selected Tag
+        if (isSelected) {
+          ctx.fillStyle = THEME.precision;
+          ctx.font = "bold 11px system-ui, sans-serif";
+          ctx.fillText("✓ SELECTED", x + cardW / 2, y + 192);
+        }
+      } else {
+        // LOCKED FORM CARD
+        ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+        ctx.strokeStyle = "rgba(239, 68, 68, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(x, y, cardW, cardH, 10);
+        ctx.fill();
+        ctx.stroke();
+
+        // Locked Title
+        ctx.textAlign = "center";
+        ctx.font = "bold 18px system-ui, sans-serif";
+        ctx.fillStyle = "#64748b";
+        ctx.fillText(def.name.toUpperCase(), x + cardW / 2, y + 36);
+
+        // Lock Icon & Badge
+        ctx.font = "24px system-ui, sans-serif";
+        ctx.fillText("🔒", x + cardW / 2, y + 80);
+
+        ctx.font = "bold 12px system-ui, sans-serif";
+        ctx.fillStyle = "#f87171";
+        ctx.fillText("LOCKED", x + cardW / 2, y + 108);
+
+        // Requirement
+        ctx.font = "11px system-ui, sans-serif";
+        ctx.fillStyle = "#cbd5e1";
+        ctx.fillText(`REQUIRES: ${def.unlock.toUpperCase()}`, x + cardW / 2, y + 130);
+
+        // Dimmed stats preview
+        ctx.font = "10px monospace";
+        ctx.fillStyle = "rgba(148, 163, 184, 0.35)";
+        ctx.fillText(`HP: ${def.hp}  •  Slots: ${def.startSlots}`, x + cardW / 2, y + 166);
       }
     });
 
-    // Start Button
-    const btnW = 260;
-    const btnH = 46;
+    // ── START BUTTON ──────────────────────────────────────
+    const btnW = 280;
+    const btnH = 48;
     const btnX = (width - btnW) / 2;
-    const btnY = height * 0.78;
+    const btnY = height * 0.79;
 
     this.clickZones.push({
       id: "start-game",
@@ -193,7 +399,7 @@ export class FlowScreens {
       y: btnY,
       w: btnW,
       h: btnH,
-      action: () => onStart(this.selectedForm),
+      action: () => onStart(this.selectedForm, this.selectedAscension, this.selectedMode),
     });
 
     ctx.fillStyle = THEME.precision;
@@ -205,7 +411,8 @@ export class FlowScreens {
     ctx.font = "bold 15px system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("BEGIN RUN [SPACE / TAP]", btnX + btnW / 2, btnY + btnH / 2);
+    const startText = this.selectedMode === "endless" ? "ENTER THE ABYSS [SPACE]" : "BEGIN EXPEDITION [SPACE]";
+    ctx.fillText(startText, btnX + btnW / 2, btnY + btnH / 2);
 
     ctx.restore();
   }
@@ -1318,5 +1525,107 @@ export class FlowScreens {
       }
     }
     ctx.fillText(line, x + maxWidth / 2, curY);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 9. VICTORY / DEFEAT RUN SUMMARY SCREEN
+  // ─────────────────────────────────────────────────────────────
+  renderRunSummary(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    run: RunState,
+    isVictory: boolean,
+    onReturnTitle: () => void
+  ): void {
+    this.resetZones();
+    ctx.save();
+
+    // Dark background with color radial glow
+    ctx.fillStyle = THEME.bgDark;
+    ctx.fillRect(0, 0, width, height);
+
+    const grad = ctx.createRadialGradient(width / 2, height / 2, 60, width / 2, height / 2, width * 0.55);
+    grad.addColorStop(0, isVictory ? "rgba(16, 185, 129, 0.25)" : "rgba(239, 68, 68, 0.2)");
+    grad.addColorStop(1, "rgba(9, 10, 15, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Card Box
+    const cardW = Math.min(480, width - 40);
+    const cardH = 340;
+    const cardX = (width - cardW) / 2;
+    const cardY = (height - cardH) / 2;
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
+    ctx.strokeStyle = isVictory ? THEME.healthGreen : THEME.healthRed;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(cardX, cardY, cardW, cardH, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    // Title
+    ctx.textAlign = "center";
+    ctx.font = "900 28px system-ui, sans-serif";
+    ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.healthRed;
+    ctx.fillText(isVictory ? "✦ EXPEDITION CONQUERED ✦" : "✦ EXPEDITION TERMINATED ✦", width / 2, cardY + 48);
+
+    // Subtitle
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillStyle = "#94a3b8";
+    const sub = isVictory
+      ? (run.mode === "endless" ? `Endless Abyss reached Depth ${run.endlessDepth}!` : `Act 3 Boss Defeated on Ascension ${run.ascension}!`)
+      : `Fell in Act ${run.act} (Ascension ${run.ascension})`;
+    ctx.fillText(sub, width / 2, cardY + 76);
+
+    // Stats Grid
+    const statY = cardY + 115;
+    ctx.font = "12px monospace";
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillText(`KILLS: ${run.stats.kills}`, width / 2 - 100, statY);
+    ctx.fillText(`FIGHTS WON: ${run.stats.fightsWon}`, width / 2 + 100, statY);
+    ctx.fillText(`LONGEST CHAIN: ${run.stats.longestChain}`, width / 2 - 100, statY + 28);
+    ctx.fillText(`PARRIES: ${run.stats.parries}`, width / 2 + 100, statY + 28);
+    ctx.fillText(`STAGGERS: ${run.stats.staggers}`, width / 2 - 100, statY + 56);
+    ctx.fillText(`CRITS: ${run.stats.crits}`, width / 2 + 100, statY + 56);
+
+    // Unlocks / Progression note
+    if (isVictory) {
+      ctx.font = "bold 12px system-ui, sans-serif";
+      ctx.fillStyle = THEME.precision;
+      if (run.ascension < 10) {
+        ctx.fillText(`★ UNLOCKED: Ascension ${run.ascension + 1} difficulty tier!`, width / 2, cardY + 225);
+      } else {
+        ctx.fillText("★ MAXIMUM ASCENSION (A10) CLEARED! MASTER OF THE TRAIL!", width / 2, cardY + 225);
+      }
+    }
+
+    // Return to Title button
+    const btnW = 240;
+    const btnH = 42;
+    const btnX = (width - btnW) / 2;
+    const btnY = cardY + cardH - 65;
+
+    this.clickZones.push({
+      id: "summary-title-btn",
+      x: btnX,
+      y: btnY,
+      w: btnW,
+      h: btnH,
+      action: onReturnTitle,
+    });
+
+    ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.precision;
+    ctx.beginPath();
+    ctx.roundRect(btnX, btnY, btnW, btnH, 8);
+    ctx.fill();
+
+    ctx.fillStyle = "#000000";
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("RETURN TO TITLE [SPACE / TAP]", btnX + btnW / 2, btnY + btnH / 2);
+
+    ctx.restore();
   }
 }

@@ -6,6 +6,7 @@ import type { Camera } from "./types";
 import { THEME, familyColor } from "./types";
 import type { VfxEngine } from "./vfx";
 import type { SoundEngine } from "../audio/soundEngine";
+import { BOSSES } from "../data/bosses";
 
 const TECH_MAP = new Map<string, TechniqueDef>(TECHNIQUES.map((t) => [t.id, t]));
 
@@ -23,12 +24,34 @@ export class ArenaRenderer {
   private prevFighterX = 0;
   private lastObservedOutcome: "running" | "won" | "lost" = "running";
 
+  // Boss cinematic presentation & phase state
+  private activeBossId: string | null = null;
+  private bossIntroTimer = 0;
+  private phaseAlertTimer = 0;
+  private phaseAlertText = "";
+  private flashAlpha = 0;
+
   update(world: World, dt: number, vfx: VfxEngine, audio?: SoundEngine): void {
     // Smooth camera track on fighter with forward anticipation
     const targetLead = 180;
     this.camera.targetX = world.fighter.x + targetLead;
     this.camera.x += (this.camera.targetX - this.camera.x) * Math.min(1, dt * 5);
     this.camera.y = 0;
+
+    // Update boss visual timers
+    if (this.bossIntroTimer > 0) this.bossIntroTimer -= dt;
+    if (this.phaseAlertTimer > 0) this.phaseAlertTimer -= dt;
+    if (this.flashAlpha > 0) this.flashAlpha = Math.max(0, this.flashAlpha - dt * 2.5);
+
+    // Detect boss encounter start
+    if (world.boss && this.activeBossId !== world.boss.id) {
+      this.activeBossId = world.boss.id;
+      this.bossIntroTimer = 3.2;
+      audio?.bossIntro();
+      vfx.shake(this.camera, 14, 0.5);
+    } else if (!world.boss) {
+      this.activeBossId = null;
+    }
 
     // Detect new sim events for visual triggers and audio playback
     this.processSimEvents(world, vfx, audio);
@@ -97,8 +120,23 @@ export class ArenaRenderer {
           audio?.hit(false);
           break;
         case "boss":
-          vfx.shake(this.camera, 12, 0.4);
-          vfx.addText(world.fighter.x + 100, this.groundY - 80, fx.text.toUpperCase(), THEME.resonance, 24, true);
+          if (fx.text === "phase") {
+            const nextPhase = (world.boss?.phase ?? 1) + 1;
+            const isFinal = world.boss?.id === "original" && nextPhase >= 3;
+            this.phaseAlertText = isFinal ? "FINAL PHASE: SHATTERED TEMPO" : `PHASE ${nextPhase}: ECHO OVERLOAD`;
+            this.phaseAlertTimer = 2.4;
+            this.flashAlpha = 0.55;
+            vfx.shake(this.camera, 22, 0.7);
+            vfx.burst(world.fighter.x + 180, this.groundY - 50, THEME.enemyBoss, 30, 240);
+            audio?.bossPhaseShift();
+          } else if (fx.text === "reorder") {
+            this.phaseAlertText = "TRAIL REORDERED: SEQUENCE INVERTED!";
+            this.phaseAlertTimer = 2.0;
+            this.flashAlpha = 0.35;
+            vfx.shake(this.camera, 16, 0.5);
+            vfx.burst(world.fighter.x + 160, this.groundY - 40, THEME.resonance, 24, 200);
+            audio?.bossPhaseShift();
+          }
           break;
         case "kill":
           vfx.burst(fx.x, this.groundY - 30, THEME.momentum, 20, 180);
@@ -153,6 +191,22 @@ export class ArenaRenderer {
 
     // 7. VFX on top of world
     vfx.render(ctx, this.camera, width, height);
+
+    // 8. Screen-Space Overlays (Flash, Boss Intro Splash, Phase Shift Banner)
+    if (this.flashAlpha > 0) {
+      ctx.save();
+      ctx.fillStyle = `rgba(255, 255, 255, ${this.flashAlpha})`;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+    }
+
+    if (this.bossIntroTimer > 0 && world.boss) {
+      this.renderBossIntroSplash(ctx, world, width, height);
+    }
+
+    if (this.phaseAlertTimer > 0) {
+      this.renderPhaseAlertBanner(ctx, width, height);
+    }
   }
 
   private renderEnvironment(ctx: CanvasRenderingContext2D, world: World, viewportWidth: number): void {
@@ -447,19 +501,69 @@ export class ArenaRenderer {
         ctx.lineTo(0, 0);
         ctx.lineTo(-rad * 1.2, -rad * 1.2);
         ctx.closePath();
-      } else if (e.kind === "duplicate" || e.kind === "original") {
-        // Imposing boss form with crowned spikes
+      } else if (e.kind === "duplicate") {
+        // The Duplicate: Corrupted shadow king with trailing shadow echo
+        ctx.save();
+        ctx.fillStyle = "rgba(168, 85, 247, 0.25)";
+        ctx.beginPath();
+        ctx.moveTo(-rad * 1.5, 0);
+        ctx.lineTo(rad * 1.5, 0);
+        ctx.lineTo(rad * 1.7, -rad * 2.8);
+        ctx.lineTo(0, -rad * 3.4);
+        ctx.lineTo(-rad * 1.7, -rad * 2.8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // Main body
         ctx.moveTo(-rad * 1.2, 0);
         ctx.lineTo(rad * 1.2, 0);
         ctx.lineTo(rad * 1.4, -rad * 2.6);
         ctx.lineTo(0, -rad * 3.2);
         ctx.lineTo(-rad * 1.4, -rad * 2.6);
         ctx.closePath();
+      } else if (e.kind === "original") {
+        // The Original: Ancient paragon with crowned robes
+        ctx.moveTo(-rad * 1.3, 0);
+        ctx.lineTo(rad * 1.3, 0);
+        ctx.lineTo(rad * 1.5, -rad * 2.8);
+        ctx.lineTo(0, -rad * 3.5);
+        ctx.lineTo(-rad * 1.5, -rad * 2.8);
+        ctx.closePath();
+
+        // Orbiting ethereal spectral blades
+        ctx.save();
+        const bladeCount = 4;
+        const rot = (Date.now() / 1000) * 2.5;
+        for (let i = 0; i < bladeCount; i++) {
+          const ang = rot + (i * Math.PI * 2) / bladeCount;
+          const bx = Math.cos(ang) * (rad * 1.7);
+          const by = -rad * 1.7 + Math.sin(ang) * (rad * 0.9);
+          ctx.strokeStyle = THEME.precision;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(bx - 5, by - 10);
+          ctx.lineTo(bx + 5, by + 10);
+          ctx.stroke();
+        }
+        ctx.restore();
       } else {
         // Default standard husk / pawn
         ctx.ellipse(0, -rad * 1.1, rad * 0.85, rad * 1.1, 0, 0, Math.PI * 2);
       }
       ctx.fill();
+
+      // Boss facial glowing accents
+      if (e.kind === "duplicate" && !isDead) {
+        ctx.fillStyle = "#ef4444";
+        ctx.beginPath();
+        ctx.arc(-rad * 0.35, -rad * 2.1, 2.5, 0, Math.PI * 2);
+        ctx.arc(rad * 0.35, -rad * 2.1, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (e.kind === "original" && !isDead) {
+        ctx.fillStyle = THEME.precision;
+        ctx.fillRect(-rad * 0.45, -rad * 2.3, rad * 0.9, 3);
+      }
 
       // Shield overlay
       if (e.shield && !isDead) {
@@ -547,5 +651,89 @@ export class ArenaRenderer {
       ctx.stroke();
       ctx.restore();
     }
+  }
+
+  private renderBossIntroSplash(ctx: CanvasRenderingContext2D, world: World, width: number, height: number): void {
+    const b = world.boss;
+    if (!b) return;
+    const def = BOSSES[b.id];
+    const t = this.bossIntroTimer;
+    const alpha = Math.min(1, Math.min(t, 3.2 - t) * 2.2);
+
+    ctx.save();
+
+    // Cinematic widescreen letterbox bars
+    const barH = Math.min(60, height * 0.08) * alpha;
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, width, barH);
+    ctx.fillRect(0, height - barH, width, barH);
+
+    // Vignette band in center
+    const bandH = 120;
+    const bandY = (height - bandH) / 2;
+    const grad = ctx.createLinearGradient(0, bandY, 0, bandY + bandH);
+    grad.addColorStop(0, "rgba(15, 23, 42, 0)");
+    grad.addColorStop(0.5, `rgba(15, 23, 42, ${0.85 * alpha})`);
+    grad.addColorStop(1, "rgba(15, 23, 42, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, bandY, width, bandH);
+
+    // Text: WARNING / BOSS ENCOUNTER
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.fillStyle = THEME.enemyBoss;
+    ctx.fillText("✦ BOSS ENCOUNTER ✦", width / 2, height / 2 - 28);
+
+    // Boss Name
+    ctx.font = "900 36px system-ui, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.shadowColor = b.id === "duplicate" ? "#a855f7" : "#fbbf24";
+    ctx.shadowBlur = 18;
+    ctx.fillText(def.name.toUpperCase(), width / 2, height / 2 + 4);
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.font = "12px system-ui, sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+    const sub = b.id === "duplicate" ? "Echo Mimic • Inverts Your Chain" : "The First Fighter • Master of the Trail";
+    ctx.fillText(sub, width / 2, height / 2 + 32);
+
+    ctx.restore();
+  }
+
+  private renderPhaseAlertBanner(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    const t = this.phaseAlertTimer;
+    const alpha = Math.min(1, Math.min(t, 2.4 - t) * 3);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    const bannerH = 46;
+    const bannerY = height * 0.32;
+
+    // Amber / crimson pulsing warning banner
+    const grad = ctx.createLinearGradient(0, bannerY, 0, bannerY + bannerH);
+    grad.addColorStop(0, "rgba(225, 29, 72, 0.85)");
+    grad.addColorStop(1, "rgba(159, 18, 57, 0.85)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, bannerY, width, bannerH);
+
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, bannerY, width, bannerH);
+
+    // Glowing alert text
+    ctx.font = "900 16px system-ui, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.shadowColor = "#fbbf24";
+    ctx.shadowBlur = 12;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`⚠️  ${this.phaseAlertText}  ⚠️`, width / 2, bannerY + bannerH / 2);
+
+    ctx.restore();
   }
 }

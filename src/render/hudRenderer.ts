@@ -3,6 +3,7 @@ import type { RunState } from "../sim/run";
 import { TECHNIQUES, type TechniqueDef } from "../data/techniques";
 import { TUNING } from "../data/tuning";
 import { THEME, familyColor } from "./types";
+import { BOSSES } from "../data/bosses";
 
 const TECH_MAP = new Map<string, TechniqueDef>(TECHNIQUES.map((t) => [t.id, t]));
 
@@ -22,7 +23,7 @@ export class HudRenderer {
   };
 
   render(ctx: CanvasRenderingContext2D, world: World, run: RunState, width: number, height: number): void {
-    // 1. Top HUD Bar (Health, Act, Timer, Kills)
+    // 1. Top HUD Bar (Health, Act, Timer, Kills, Boss Bar)
     this.renderTopBar(ctx, world, run, width);
 
     // 2. Chain Trail Visualizer (Fighter -> Echo 1 -> Echo 2...)
@@ -35,6 +36,89 @@ export class HudRenderer {
     if (world.outcome !== "running") {
       this.renderOutcomeOverlay(ctx, world, width, height);
     }
+  }
+
+  private renderBossBar(ctx: CanvasRenderingContext2D, world: World, width: number): void {
+    if (!world.boss) return;
+    const b = world.boss;
+    const bossDef = BOSSES[b.id];
+    const bossEnemy = world.enemyById(b.enemyId);
+    if (!bossEnemy || bossEnemy.state === "dead") return;
+
+    const barW = Math.min(440, width * 0.44);
+    const barH = 16;
+    const barX = (width - barW) / 2;
+    const barY = 24;
+
+    ctx.save();
+
+    // Header above bar: BOSS NAME + CURRENT PHASE
+    ctx.font = "bold 12px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillStyle = THEME.enemyBoss;
+    const maxPhase = bossDef.phaseAt.length + 1;
+    ctx.fillText(`👑 ${bossDef.name.toUpperCase()} — PHASE ${b.phase + 1} / ${maxPhase}`, width / 2, barY - 3);
+
+    // Bar background
+    ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+    ctx.strokeStyle = "rgba(244, 63, 94, 0.5)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(barX, barY, barW, barH, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // HP fill
+    const hpRatio = Math.max(0, Math.min(1, bossEnemy.hp / bossEnemy.maxHp));
+    const fillW = Math.max(0, barW * hpRatio);
+    if (fillW > 0) {
+      const grad = ctx.createLinearGradient(barX, barY, barX + fillW, barY);
+      grad.addColorStop(0, "#9f1239");
+      grad.addColorStop(1, "#f43f5e");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(barX, barY, fillW, barH, 4);
+      ctx.fill();
+    }
+
+    // Phase threshold divider notches
+    const phaseAt = bossDef.phaseAt.map((p, i) => (b.id === "original" && i === 1 && world.cfg.ascension >= 10 ? 0.35 : p));
+    for (const thresh of phaseAt) {
+      const notchX = barX + barW * thresh;
+      const isPassed = hpRatio <= thresh;
+
+      // Vertical line
+      ctx.strokeStyle = isPassed ? "rgba(255, 255, 255, 0.2)" : "#fbbf24";
+      ctx.lineWidth = isPassed ? 1 : 2;
+      ctx.beginPath();
+      ctx.moveTo(notchX, barY - 2);
+      ctx.lineTo(notchX, barY + barH + 2);
+      ctx.stroke();
+
+      // Diamond marker at top of notch if active
+      if (!isPassed) {
+        ctx.fillStyle = "#fbbf24";
+        ctx.beginPath();
+        ctx.arc(notchX, barY - 3, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // HP Text inside bar
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${Math.round(bossEnemy.hp)} / ${bossEnemy.maxHp} HP`, width / 2, barY + barH / 2);
+
+    // Subtitle below boss bar
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+    const durationS = (world.stats.durationMs / 1000).toFixed(1);
+    ctx.fillText(`${durationS}s  •  Form: ${world.form.name}`, width / 2, barY + barH + 12);
+
+    ctx.restore();
   }
 
   private renderTopBar(ctx: CanvasRenderingContext2D, world: World, run: RunState, width: number): void {
@@ -81,17 +165,23 @@ export class HudRenderer {
     ctx.textBaseline = "middle";
     ctx.fillText(`${Math.round(f.hp)} / ${f.maxHp} HP`, pad + hpBarW / 2, topY + hpBarH / 2);
 
-    // Act & Fight Title (Center)
-    ctx.font = "bold 14px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#f3f4f6";
-    const encounterTitle = world.boss ? `BOSS: ${world.boss.id.toUpperCase()}` : `ACT ${world.cfg.act} — ENCOUNTER ${run.fightIndex + 1}`;
-    ctx.fillText(encounterTitle, width / 2, topY + 8);
+    // Center Display: Boss Bar vs Standard Encounter Title
+    if (world.boss) {
+      this.renderBossBar(ctx, world, width);
+    } else {
+      ctx.font = "bold 14px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#f3f4f6";
+      const encounterTitle = run.mode === "endless"
+        ? `ENDLESS ABYSS — DEPTH ${run.endlessDepth + 1}`
+        : `ACT ${world.cfg.act} — ENCOUNTER ${run.fightIndex + 1}`;
+      ctx.fillText(encounterTitle, width / 2, topY + 8);
 
-    ctx.font = "11px system-ui, sans-serif";
-    ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-    const durationS = (world.stats.durationMs / 1000).toFixed(1);
-    ctx.fillText(`${durationS}s  •  Form: ${world.form.name}`, width / 2, topY + 24);
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+      const durationS = (world.stats.durationMs / 1000).toFixed(1);
+      ctx.fillText(`${durationS}s  •  Form: ${world.form.name}`, width / 2, topY + 24);
+    }
 
     // Pause button in top right
     const pauseW = 32;

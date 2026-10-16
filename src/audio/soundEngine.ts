@@ -394,4 +394,71 @@ export class SoundEngine {
       }, i * 90);
     });
   }
+
+  /** Dramatic resonant brass swell and sub bass drop when boss encounter begins */
+  bossIntro(): void {
+    if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
+    const t = this.ctx.currentTime;
+
+    // Sub rumble sweep
+    const sub = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    sub.type = "sine";
+    sub.frequency.setValueAtTime(110, t);
+    sub.frequency.exponentialRampToValueAtTime(32, t + 1.2);
+    subGain.gain.setValueAtTime(0.4, t);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
+    sub.connect(subGain);
+    subGain.connect(this.masterGain);
+    sub.start(t);
+    sub.stop(t + 1.2);
+
+    // Dissonant minor 2nd harmonic brass cluster (C3, C#3, G3)
+    const chord = [130.81, 138.59, 196.00];
+    for (const freq of chord) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.09, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 1.5);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + 1.5);
+    }
+  }
+
+  /** Alarming glissando siren burst and impact boom when boss changes phases */
+  bossPhaseShift(): void {
+    if (!this.ensureContext() || !this.ctx || !this.masterGain) return;
+    const t = this.ctx.currentTime;
+
+    // Siren alarm glissando
+    const siren = this.ctx.createOscillator();
+    const sirenGain = this.ctx.createGain();
+    siren.type = "sawtooth";
+    siren.frequency.setValueAtTime(280, t);
+    siren.frequency.linearRampToValueAtTime(740, t + 0.25);
+    siren.frequency.linearRampToValueAtTime(380, t + 0.55);
+    sirenGain.gain.setValueAtTime(0.18, t);
+    sirenGain.gain.exponentialRampToValueAtTime(0.001, t + 0.65);
+    siren.connect(sirenGain);
+    sirenGain.connect(this.masterGain);
+    siren.start(t);
+    siren.stop(t + 0.65);
+
+    // Sub bass impact
+    const sub = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    sub.type = "triangle";
+    sub.frequency.setValueAtTime(95, t);
+    sub.frequency.exponentialRampToValueAtTime(26, t + 0.75);
+    subGain.gain.setValueAtTime(0.45, t);
+    subGain.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+    sub.connect(subGain);
+    subGain.connect(this.masterGain);
+    sub.start(t);
+    sub.stop(t + 0.75);
+  }
 }

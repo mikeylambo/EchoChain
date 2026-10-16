@@ -92,7 +92,14 @@ export class SaveManager {
     return false;
   }
 
-  recordRunEnd(kills: number, longestChain: number, won: boolean, act: number): void {
+  recordRunEnd(
+    kills: number,
+    longestChain: number,
+    won: boolean,
+    act: number,
+    ascension = 0,
+    mode: "standard" | "endless" = "standard"
+  ): void {
     this.data.totalRuns++;
     this.data.totalKills += kills;
     this.data.bestChain = Math.max(this.data.bestChain, longestChain);
@@ -104,6 +111,18 @@ export class SaveManager {
       this.unlockForm("phantom");
     }
 
+    // Win progression: unlock next Ascension tier if current or higher ascension was conquered
+    if (won && mode === "standard") {
+      if (ascension >= this.data.highestAscension) {
+        this.data.highestAscension = Math.min(10, this.data.highestAscension + 1);
+      }
+    }
+
+    this.save();
+  }
+
+  unlockAscension(level: number): void {
+    this.data.highestAscension = Math.max(this.data.highestAscension, Math.min(10, level));
     this.save();
   }
 
