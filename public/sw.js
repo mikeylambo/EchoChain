@@ -1,59 +1,15 @@
-const CACHE_NAME = "echo-chain-v1";
-const ASSETS_TO_CACHE = [
-  "/",
-  "/index.html",
-  "/manifest.webmanifest",
-  "/icon-192.png",
-  "/icon-512.png",
-  "/icon.svg"
-];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
-    })
-  );
-  self.skipWaiting();
-});
-
+// Retired service worker. The previous build cached everything cache-first, which would pin returning
+// players to the old game forever. This version clears every cache, unregisters itself, and reloads open tabs
+// so they fetch the current build from the network.
+self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-      );
-    })
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+      await self.registration.unregister();
+      const clients = await self.clients.matchAll({ type: "window" });
+      for (const c of clients) c.navigate(c.url);
+    })(),
   );
-  self.clients.claim();
-});
-
-self.addEventListener("fetch", (event) => {
-  // Only handle GET requests
-  if (event.request.method !== "GET") return;
-
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
-        // Cache successful responses for JS/CSS/HTML
-        if (response.status === 200 && (response.type === "basic" || response.type === "cors")) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      }).catch(() => {
-        // Fallback to cached index.html for navigation requests when offline
-        if (event.request.mode === "navigate") {
-          return caches.match("/index.html");
-        }
-      });
-    })
-  );
-});
-
-self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
 });

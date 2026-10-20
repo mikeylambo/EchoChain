@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p vendor/web-shell/tsconfig.json && tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && node --import tsx --test src/debug/combos.test.ts && tsx src/debug/headless.ts --runs 200",
     "sim": "tsx src/debug/headless.ts",
-    "test": "node --import tsx --test src/debug/*.test.ts",
+    "test": "node --import tsx --test src/debug/combos.test.ts",
     "combos": "tsx src/debug/combo-report.ts"
   },
   "dependencies": {

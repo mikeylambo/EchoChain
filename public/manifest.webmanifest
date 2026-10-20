@@ -1,13 +1,13 @@
 {
   "name": "Echo Chain",
   "short_name": "EchoChain",
-  "description": "A Kinetic Deckbuilding Action Rogue-Lite",
+  "description": "Army of One. A marching autobattler where every technique becomes an echo, and the order of your trail is your build.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "landscape",
-  "theme_color": "#090a0f",
-  "background_color": "#090a0f",
+  "orientation": "any",
+  "theme_color": "#07070a",
+  "background_color": "#07070a",
   "icons": [
     {
       "src": "/icon-192.png",
@@ -27,5 +27,8 @@
       "type": "image/svg+xml"
     }
   ],
-  "categories": ["games", "action"]
+  "categories": [
+    "games",
+    "action"
+  ]
 }

@@ -1,2036 +1,621 @@
-import { FORMS, FORM_LIST, type FormId } from "../data/forms";
+import { audio } from "../audio/audio";
+import { ASCENSIONS, BOSSES } from "../data/bosses";
+import { FORM_LIST, FORMS, type FormId } from "../data/forms";
 import { SEAL } from "../data/seals";
 import { TECH, TECHNIQUES } from "../data/techniques";
-import { analyzeTrail, type LinkInfo } from "../sim/links";
-import type { DraftCard, MapNode, RunState } from "../sim/run";
-import { THEME, familyColor } from "../render/types";
-import { GDD_COMBOS } from "../debug/combos";
-import type { GameSettings, LeaderboardEntry } from "../storage/saveData";
-import { ASCENSIONS } from "../data/bosses";
-import { ACHIEVEMENTS, type AchievementDef } from "../game/achievements";
-import { RELICS } from "../data/relics";
+import { THEMES } from "../render/background";
+import type { TrailSlot } from "../sim/chain";
+import { analyzeTrail, bestOrder } from "../sim/links";
+import { arrange, currentStep, type DraftCard, type MapNode, type RunState } from "../sim/run";
+import { goalFor, type CodexEntry, type Profile, type Unlocks } from "../meta/profile";
+import { btn, el, frag, keys, mount } from "./dom";
+import { evIcon, nodeIcon, techIcon, UI_ICON } from "./icons";
+import { buildStrip, famClass, ioIcons, pips, portrait, tileHtml } from "./trailStrip";
 
-export type ScreenState =
-  | "title"
-  | "combat"
-  | "draft"
-  | "organizer"
-  | "fork"
-  | "forge"
-  | "rest"
-  | "victory"
-  | "game_over"
-  | "pause"
-  | "codex";
+const ROMAN = ["", "I", "II", "III"];
 
-export interface ClickZone {
-  id: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  action: () => void;
+// ───────────────────────── Title
+export function titleScreen(p: Profile): Promise<"continue" | "new" | "codex" | "settings"> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr title-scr");
+    s.innerHTML = `<div class="logo"><div class="word">ECHO CHAIN</div><div class="tag">ARMY OF ONE</div></div>`;
+    const menu = el("div", "menu");
+    let pop = () => {};
+    const go = (r: Parameters<typeof resolve>[0]) => { pop(); resolve(r); };
+    if (p.savedRun) {
+      const c = btn(`Continue <span class="k">Act ${p.savedRun.mode === "endless" ? "∞" : ROMAN[p.savedRun.act]}</span>`, "btn primary", () => go("continue"));
+      c.dataset.autofocus = "";
+      menu.appendChild(c);
+    }
+    const n = btn("New Run", p.savedRun ? "btn" : "btn primary", () => go("new"));
+    if (!p.savedRun) n.dataset.autofocus = "";
+    menu.appendChild(n);
+    menu.appendChild(btn("Codex", "btn", () => go("codex")));
+    menu.appendChild(btn("Settings", "btn", () => go("settings")));
+    s.appendChild(menu);
+    s.appendChild(frag(`<div class="title-foot">${p.runs ? `Runs ${p.runs} · Wins ${p.wins} · Best chain ×${p.bestChain}` : "A Soulfire Legends Universe game"}</div>`));
+    pop = keys((e) => {
+      if (e.key === "Enter") go(p.savedRun ? "continue" : "new");
+    });
+    mount(s);
+  });
 }
 
-export class FlowScreens {
-  clickZones: ClickZone[] = [];
-  selectedForm: FormId = "duelist";
-  selectedMode: "standard" | "endless" | "daily" = "standard";
-  selectedAscension = 0;
-  codexTab: "combos" | "achievements" | "leaderboard" | "data" = "combos";
-  customSeed = "";
+// ───────────────────────── New run
+export interface NewRunChoice { form: FormId; ascension: number; mode: "standard" | "endless" }
 
-  resetZones(): void {
-    this.clickZones = [];
-  }
-
-  handlePointerDown(x: number, y: number): boolean {
-    for (const z of this.clickZones) {
-      if (x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) {
-        z.action();
-        return true;
+export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
+  return new Promise((resolve) => {
+    let form: FormId = p.forms.includes("duelist") ? "duelist" : p.forms[0]!;
+    let asc = 0;
+    let mode: "standard" | "endless" = "standard";
+    const s = el("div", "scr dim");
+    s.innerHTML = `<div class="kicker">Choose your form</div><div class="h1">One Becomes Many</div><div class="sub">Your echoes take the shape of the fighter you choose.</div>`;
+    const forms = el("div", "forms");
+    const cards: HTMLElement[] = [];
+    const lockText: Record<FormId, string> = { duelist: "", brawler: "Clear Act I", phantom: "Clear a run" };
+    for (const id of FORM_LIST) {
+      const f = FORMS[id];
+      const locked = !p.forms.includes(id);
+      const c = el("div", `form-card ${locked ? "locked" : ""}`);
+      c.tabIndex = locked ? -1 : 0;
+      c.innerHTML = `<canvas></canvas><div class="fn">${f.name}</div><div class="fd">${f.desc}${id === "brawler" ? " — every strike emits Stagger" : id === "phantom" ? " — starts with 3 echo slots" : " — balanced, crit-leaning"}</div>
+        <div class="fs"><span>${UI_ICON.heart.replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-1px"')} ${f.hp}</span><span>Strike ${f.interval}s</span><span>Slots ${f.startSlots}</span></div>
+        ${locked ? `<div class="lockline">${UI_ICON.lock} ${lockText[id]}</div>` : ""}`;
+      portrait(c.querySelector("canvas")!, id, 140, 150, 1.25, locked ? "idle" : "victory", locked ? 0.3 : 0.6);
+      if (!locked) {
+        c.addEventListener("click", () => { form = id; audio.ui("tick"); sync(); });
+        c.addEventListener("dblclick", () => start());
       }
+      cards.push(c);
+      forms.appendChild(c);
     }
-    return false;
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 1. TITLE SCREEN & FORM SELECTION
-  // ─────────────────────────────────────────────────────────────
-  renderTitle(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    unlockedForms: FormId[],
-    highestAscension: number,
-    onStart: (form: FormId, ascension: number, mode: "standard" | "endless" | "daily", customSeed?: string) => void,
-    onOpenCodex?: () => void,
-    primaryPrompt = "[SPACE]",
-    onInstallApp?: () => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    // Ensure selectedForm is unlocked; if not, default to first unlocked form
-    if (!unlockedForms.includes(this.selectedForm)) {
-      this.selectedForm = unlockedForms[0] ?? "duelist";
+    s.appendChild(forms);
+    const opts = el("div", "col");
+    const modeCtl = el("div", "seg-ctl");
+    modeCtl.innerHTML = `<button data-m="standard">Standard</button><button data-m="endless" ${p.endless ? "" : "disabled title='Clear a run to unlock'"}>Endless Road</button>`;
+    modeCtl.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { mode = b.dataset.m as typeof mode; audio.ui("tick"); sync(); }));
+    opts.appendChild(modeCtl);
+    const ascRow = el("div", "col");
+    if (p.ascension > 0) {
+      ascRow.innerHTML = `<div class="stepper"><button class="iconbtn" data-d="-1">−</button><div><div class="kicker" style="text-align:center">Ascension</div><div class="val"></div></div><button class="iconbtn" data-d="1">+</button></div><div class="asc-desc"></div>`;
+      ascRow.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.addEventListener("click", () => { asc = Math.max(0, Math.min(p.ascension, asc + Number(b.dataset.d))); audio.ui("tick"); sync(); }));
     }
-
-    // Ensure selectedAscension does not exceed highestAscension
-    if (this.selectedAscension > highestAscension) {
-      this.selectedAscension = highestAscension;
+    opts.appendChild(ascRow);
+    s.appendChild(opts);
+    const row = el("div", "row");
+    row.style.marginTop = "22px";
+    const back = btn("Back", "btn ghost", () => { pop(); resolve(null); }, "back");
+    const go = btn("Begin the March", "btn primary", () => start());
+    go.dataset.autofocus = "";
+    row.append(back, go);
+    s.appendChild(row);
+    function sync() {
+      cards.forEach((c, i) => c.classList.toggle("on", FORM_LIST[i] === form));
+      modeCtl.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+      const v = ascRow.querySelector(".val");
+      if (v) v.textContent = String(asc);
+      const d = ascRow.querySelector(".asc-desc");
+      if (d) d.textContent = asc === 0 ? "The road as it was written." : ASCENSIONS.slice(0, asc).map((a) => a.desc).slice(-2).join(" · ");
     }
-
-    // Dark ink backdrop with subtle center bloom
-    ctx.fillStyle = THEME.bgDark;
-    ctx.fillRect(0, 0, width, height);
-
-    const grad = ctx.createRadialGradient(width / 2, height / 2, 50, width / 2, height / 2, width * 0.6);
-    grad.addColorStop(0, "rgba(30, 41, 59, 0.4)");
-    grad.addColorStop(1, "rgba(9, 10, 15, 0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-
-    // Title
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "900 42px system-ui, sans-serif";
-    ctx.shadowColor = "rgba(255, 255, 255, 0.35)";
-    ctx.shadowBlur = 16;
-    ctx.fillText("ECHO CHAIN", width / 2, height * 0.11);
-    ctx.shadowBlur = 0;
-
-    // Subtitle
-    ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-    ctx.font = "13px system-ui, sans-serif";
-    ctx.fillText("A KINETIC ROGUE-LITE", width / 2, height * 0.15);
-
-    // Install Button in top right (if PWA installable)
-    if (onInstallApp) {
-      const installBtnW = 110;
-      const installBtnH = 32;
-      const installBtnX = width - (onOpenCodex ? 140 : 20) - installBtnW - 10;
-      const installBtnY = 20;
-
-      this.clickZones.push({
-        id: "title-install",
-        x: installBtnX,
-        y: installBtnY,
-        w: installBtnW,
-        h: installBtnH,
-        action: onInstallApp,
-      });
-
-      ctx.fillStyle = "rgba(16, 185, 129, 0.25)";
-      ctx.strokeStyle = THEME.healthGreen;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(installBtnX, installBtnY, installBtnW, installBtnH, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = THEME.healthGreen;
-      ctx.font = "bold 11px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("📲 INSTALL", installBtnX + installBtnW / 2, installBtnY + installBtnH / 2);
-    }
-
-    // Codex Button in top right
-    if (onOpenCodex) {
-      const codexBtnW = 120;
-      const codexBtnH = 32;
-      const codexBtnX = width - codexBtnW - 20;
-      const codexBtnY = 20;
-
-      this.clickZones.push({
-        id: "title-codex",
-        x: codexBtnX,
-        y: codexBtnY,
-        w: codexBtnW,
-        h: codexBtnH,
-        action: onOpenCodex,
-      });
-
-      ctx.fillStyle = "rgba(30, 41, 59, 0.85)";
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(codexBtnX, codexBtnY, codexBtnW, codexBtnH, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = THEME.precision;
-      ctx.font = "bold 11px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("📖 CODEX", codexBtnX + codexBtnW / 2, codexBtnY + codexBtnH / 2);
-    }
-
-    // ── GAME MODE TOGGLE (STANDARD vs ENDLESS vs DAILY) ──
-    const modeY = height * 0.19;
-    const modeW = Math.min(130, (width - 60) / 3);
-    const modeH = 32;
-    const modeSpacing = 8;
-    const totalModeW = modeW * 3 + modeSpacing * 2;
-    const standardX = (width - totalModeW) / 2;
-    const endlessX = standardX + modeW + modeSpacing;
-    const dailyX = endlessX + modeW + modeSpacing;
-
-    // Standard Mode Button
-    const isStandard = this.selectedMode === "standard";
-    this.clickZones.push({
-      id: "mode-standard",
-      x: standardX,
-      y: modeY,
-      w: modeW,
-      h: modeH,
-      action: () => { this.selectedMode = "standard"; },
-    });
-    ctx.fillStyle = isStandard ? "rgba(59, 130, 246, 0.25)" : "rgba(15, 23, 42, 0.7)";
-    ctx.strokeStyle = isStandard ? THEME.flow : "rgba(255, 255, 255, 0.15)";
-    ctx.lineWidth = isStandard ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(standardX, modeY, modeW, modeH, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = isStandard ? "#ffffff" : "#94a3b8";
-    ctx.font = `bold ${isStandard ? "11px" : "10px"} system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("⚔️ 3-ACT EXP", standardX + modeW / 2, modeY + modeH / 2);
-
-    // Endless Mode Button
-    const isEndless = this.selectedMode === "endless";
-    this.clickZones.push({
-      id: "mode-endless",
-      x: endlessX,
-      y: modeY,
-      w: modeW,
-      h: modeH,
-      action: () => { this.selectedMode = "endless"; },
-    });
-    ctx.fillStyle = isEndless ? "rgba(168, 85, 247, 0.25)" : "rgba(15, 23, 42, 0.7)";
-    ctx.strokeStyle = isEndless ? THEME.momentum : "rgba(255, 255, 255, 0.15)";
-    ctx.lineWidth = isEndless ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(endlessX, modeY, modeW, modeH, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = isEndless ? "#ffffff" : "#94a3b8";
-    ctx.font = `bold ${isEndless ? "11px" : "10px"} system-ui, sans-serif`;
-    ctx.fillText("♾️ ENDLESS", endlessX + modeW / 2, modeY + modeH / 2);
-
-    // Daily Challenge Button
-    const isDaily = this.selectedMode === "daily";
-    this.clickZones.push({
-      id: "mode-daily",
-      x: dailyX,
-      y: modeY,
-      w: modeW,
-      h: modeH,
-      action: () => { this.selectedMode = "daily"; },
-    });
-    ctx.fillStyle = isDaily ? "rgba(245, 158, 11, 0.25)" : "rgba(15, 23, 42, 0.7)";
-    ctx.strokeStyle = isDaily ? "#fbbf24" : "rgba(255, 255, 255, 0.15)";
-    ctx.lineWidth = isDaily ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(dailyX, modeY, modeW, modeH, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = isDaily ? "#ffffff" : "#94a3b8";
-    ctx.font = `bold ${isDaily ? "11px" : "10px"} system-ui, sans-serif`;
-    ctx.fillText("📅 DAILY RUN", dailyX + modeW / 2, modeY + modeH / 2);
-
-    // ── DAILY CHALLENGE MUTATOR BANNER ──
-    if (this.selectedMode === "daily") {
-      const dailyY = height * 0.255;
-      ctx.textAlign = "center";
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.fillStyle = "#fbbf24";
-      const dateStr = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-      ctx.fillText(`📅 TODAY'S DAILY RUN: ${dateStr}`, width / 2, dailyY + 8);
-      ctx.font = "11px system-ui, sans-serif";
-      ctx.fillStyle = "#cbd5e1";
-      ctx.fillText("★ MUTATOR: GLASS CANNON (+50% Crit Damage, -35% Max HP)", width / 2, dailyY + 26);
-    }
-
-    // ── ASCENSION SELECTOR (STANDARD MODE ONLY) ───────────
-    if (this.selectedMode === "standard") {
-      const ascY = height * 0.255;
-      const ascBoxW = 280;
-      const ascBoxH = 34;
-      const ascBoxX = (width - ascBoxW) / 2;
-
-      // Left Arrow
-      const arrowW = 34;
-      const canDec = this.selectedAscension > 0;
-      if (canDec) {
-        this.clickZones.push({
-          id: "asc-dec",
-          x: ascBoxX,
-          y: ascY,
-          w: arrowW,
-          h: ascBoxH,
-          action: () => {
-            if (this.selectedAscension > 0) this.selectedAscension--;
-          },
-        });
-      }
-      ctx.fillStyle = canDec ? "rgba(30, 41, 59, 0.85)" : "rgba(15, 23, 42, 0.4)";
-      ctx.strokeStyle = canDec ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.05)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(ascBoxX, ascY, arrowW, ascBoxH, 6);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = canDec ? "#ffffff" : "#475569";
-      ctx.font = "bold 15px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("◀", ascBoxX + arrowW / 2, ascY + ascBoxH / 2);
-
-      // Ascension Display Center
-      const dispX = ascBoxX + arrowW + 8;
-      const dispW = ascBoxW - arrowW * 2 - 16;
-      ctx.fillStyle = "rgba(15, 23, 42, 0.8)";
-      ctx.strokeStyle = this.selectedAscension > 0 ? THEME.precision : "rgba(255, 255, 255, 0.15)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(dispX, ascY, dispW, ascBoxH, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = this.selectedAscension > 0 ? THEME.precision : "#ffffff";
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const ascLabel = this.selectedAscension === 0 ? "STANDARD DIFFICULTY" : `ASCENSION ${this.selectedAscension}`;
-      ctx.fillText(ascLabel, dispX + dispW / 2, ascY + ascBoxH / 2);
-
-      // Right Arrow
-      const rightX = ascBoxX + ascBoxW - arrowW;
-      const canInc = this.selectedAscension < Math.min(10, highestAscension);
-      if (canInc) {
-        this.clickZones.push({
-          id: "asc-inc",
-          x: rightX,
-          y: ascY,
-          w: arrowW,
-          h: ascBoxH,
-          action: () => {
-            if (this.selectedAscension < Math.min(10, highestAscension)) {
-              this.selectedAscension++;
-            }
-          },
-        });
-      }
-      ctx.fillStyle = canInc ? "rgba(30, 41, 59, 0.85)" : "rgba(15, 23, 42, 0.4)";
-      ctx.strokeStyle = canInc ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.05)";
-      ctx.beginPath();
-      ctx.roundRect(rightX, ascY, arrowW, ascBoxH, 6);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = canInc ? "#ffffff" : "#475569";
-      ctx.font = "bold 15px system-ui, sans-serif";
-      ctx.fillText("▶", rightX + arrowW / 2, ascY + ascBoxH / 2);
-
-      // Modifier Description
-      ctx.textAlign = "center";
-      ctx.font = "11px system-ui, sans-serif";
-      if (this.selectedAscension === 0) {
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillText("Standard encounters (Beating Act 3 unlocks Ascension 1)", width / 2, ascY + ascBoxH + 16);
-      } else {
-        const desc = ASCENSIONS[this.selectedAscension - 1]?.desc ?? "";
-        ctx.fillStyle = THEME.precision;
-        ctx.fillText(`A${this.selectedAscension}: ${desc} (Cumulative)`, width / 2, ascY + ascBoxH + 16);
-      }
-    } else {
-      // Endless description
-      const ascY = height * 0.255;
-      ctx.textAlign = "center";
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.fillStyle = THEME.momentum;
-      ctx.fillText("Infinite Depth • Escalating Enemy Density • True Trial of the Echo Trail", width / 2, ascY + 20);
-    }
-
-    // ── FORM SELECTION PROMPT ─────────────────────────────
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#e2e8f0";
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.fillText("SELECT YOUR COMBAT FORM", width / 2, height * 0.35);
-
-    // ── 3 FORM CARDS ──────────────────────────────────────
-    const cardW = Math.min(220, (width - 60) / 3);
-    const cardH = 210;
-    const spacing = 16;
-    const totalW = 3 * cardW + 2 * spacing;
-    const startX = (width - totalW) / 2;
-    const startY = height * 0.39;
-
-    FORM_LIST.forEach((formId, i) => {
-      const def = FORMS[formId];
-      const isUnlocked = unlockedForms.includes(formId);
-      const isSelected = this.selectedForm === formId && isUnlocked;
-      const x = startX + i * (cardW + spacing);
-      const y = startY;
-
-      // Register click zone only if unlocked
-      if (isUnlocked) {
-        this.clickZones.push({
-          id: `form-${formId}`,
-          x,
-          y,
-          w: cardW,
-          h: cardH,
-          action: () => { this.selectedForm = formId; },
-        });
-      }
-
-      // Card Background
-      if (isUnlocked) {
-        ctx.fillStyle = isSelected ? "rgba(30, 41, 59, 0.95)" : "rgba(15, 23, 42, 0.8)";
-        ctx.strokeStyle = isSelected ? THEME.precision : "rgba(255, 255, 255, 0.15)";
-        ctx.lineWidth = isSelected ? 2.5 : 1;
-        ctx.beginPath();
-        ctx.roundRect(x, y, cardW, cardH, 10);
-        ctx.fill();
-        ctx.stroke();
-
-        // Card Title
-        ctx.textAlign = "center";
-        ctx.font = "bold 18px system-ui, sans-serif";
-        ctx.fillStyle = isSelected ? THEME.precision : "#ffffff";
-        ctx.fillText(def.name.toUpperCase(), x + cardW / 2, y + 36);
-
-        // Description
-        ctx.font = "12px system-ui, sans-serif";
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillText(def.desc, x + cardW / 2, y + 62);
-
-        // Stats
-        ctx.font = "11px monospace";
-        ctx.fillStyle = "#cbd5e1";
-        ctx.fillText(`HP: ${def.hp}`, x + cardW / 2, y + 100);
-        ctx.fillText(`Interval: ${def.interval}s`, x + cardW / 2, y + 122);
-        ctx.fillText(`Crit Rate: ${Math.round(def.crit * 100)}%`, x + cardW / 2, y + 144);
-        ctx.fillText(`Echo Slots: ${def.startSlots}`, x + cardW / 2, y + 166);
-
-        // Selected Tag
-        if (isSelected) {
-          ctx.fillStyle = THEME.precision;
-          ctx.font = "bold 11px system-ui, sans-serif";
-          ctx.fillText("✓ SELECTED", x + cardW / 2, y + 192);
-        }
-      } else {
-        // LOCKED FORM CARD
-        ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
-        ctx.strokeStyle = "rgba(239, 68, 68, 0.35)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(x, y, cardW, cardH, 10);
-        ctx.fill();
-        ctx.stroke();
-
-        // Locked Title
-        ctx.textAlign = "center";
-        ctx.font = "bold 18px system-ui, sans-serif";
-        ctx.fillStyle = "#64748b";
-        ctx.fillText(def.name.toUpperCase(), x + cardW / 2, y + 36);
-
-        // Lock Icon & Badge
-        ctx.font = "24px system-ui, sans-serif";
-        ctx.fillText("🔒", x + cardW / 2, y + 80);
-
-        ctx.font = "bold 12px system-ui, sans-serif";
-        ctx.fillStyle = "#f87171";
-        ctx.fillText("LOCKED", x + cardW / 2, y + 108);
-
-        // Requirement
-        ctx.font = "11px system-ui, sans-serif";
-        ctx.fillStyle = "#cbd5e1";
-        ctx.fillText(`REQUIRES: ${def.unlock.toUpperCase()}`, x + cardW / 2, y + 130);
-
-        // Dimmed stats preview
-        ctx.font = "10px monospace";
-        ctx.fillStyle = "rgba(148, 163, 184, 0.35)";
-        ctx.fillText(`HP: ${def.hp}  •  Slots: ${def.startSlots}`, x + cardW / 2, y + 166);
+    function start() { pop(); resolve({ form, ascension: mode === "endless" ? 0 : asc, mode }); }
+    const pop = keys((e) => {
+      if (e.key === "Escape") { pop(); resolve(null); }
+      if (e.key === "Enter") start();
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const av = FORM_LIST.filter((f) => p.forms.includes(f));
+        const i = av.indexOf(form);
+        form = av[(i + (e.key === "ArrowRight" ? 1 : av.length - 1)) % av.length]!;
+        audio.ui("tick");
+        sync();
       }
     });
-
-    // ── BUTTON GEOMETRY ──────────────────────────────────
-    const btnW = 280;
-    const btnH = 48;
-    const btnX = (width - btnW) / 2;
-    const btnY = Math.min(height - 70, startY + cardH + 46);
-
-    // ── CUSTOM SEED PROMPT ────────────────────────────────
-    const seedY = btnY - 24;
-    ctx.font = "11px monospace";
-    ctx.fillStyle = "#64748b";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`SEED: ${this.customSeed || "AUTO-GENERATED"} [CLICK TO SET]`, width / 2, seedY);
-
-    this.clickZones.push({
-      id: "title-custom-seed",
-      x: width / 2 - 130,
-      y: seedY - 12,
-      w: 260,
-      h: 22,
-      action: () => {
-        const input = prompt("Enter custom run seed (or leave blank for random):", this.customSeed);
-        if (input !== null) {
-          this.customSeed = input.trim();
-        }
-      },
-    });
-
-    // ── START BUTTON ──────────────────────────────────────
-
-    this.clickZones.push({
-      id: "start-game",
-      x: btnX,
-      y: btnY,
-      w: btnW,
-      h: btnH,
-      action: () => onStart(this.selectedForm, this.selectedAscension, this.selectedMode, this.customSeed || undefined),
-    });
-
-    ctx.fillStyle = THEME.precision;
-    ctx.beginPath();
-    ctx.roundRect(btnX, btnY, btnW, btnH, 8);
-    ctx.fill();
-
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 15px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    let startText = `BEGIN EXPEDITION ${primaryPrompt}`;
-    if (this.selectedMode === "endless") {
-      startText = `ENTER THE ABYSS ${primaryPrompt}`;
-    } else if (this.selectedMode === "daily") {
-      startText = `START DAILY RUN ${primaryPrompt}`;
-    }
-    ctx.fillText(startText, btnX + btnW / 2, btnY + btnH / 2);
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 2. DRAFT SCREEN (TECHNIQUES / UPGRADES / RELICS)
-  // ─────────────────────────────────────────────────────────────
-  renderDraft(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    cards: DraftCard[],
-    run: RunState,
-    onPick: (card: DraftCard) => void,
-    onSkip?: () => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    // Dark backdrop
-    ctx.fillStyle = "rgba(4, 7, 13, 0.9)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 26px system-ui, sans-serif";
-    ctx.fillText("WEAVE INTO YOUR TRAIL", width / 2, height * 0.16);
-
-    ctx.font = "13px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText("Choose an Echo technique, Rank enhancement, or Relic Seal", width / 2, height * 0.21);
-
-    // Cards
-    const cardW = Math.min(240, (width - 60) / Math.max(1, cards.length));
-    const cardH = 280;
-    const spacing = 20;
-    const totalW = cards.length * cardW + (cards.length - 1) * spacing;
-    const startX = (width - totalW) / 2;
-    const startY = height * 0.28;
-
-    const trailInfo = analyzeTrail(run.trail, run.form);
-    const lastEmits = trailInfo.emits[trailInfo.emits.length - 1] ?? [];
-
-    cards.forEach((card, i) => {
-      const x = startX + i * (cardW + spacing);
-      const y = startY;
-
-      this.clickZones.push({
-        id: `card-${i}`,
-        x,
-        y,
-        w: cardW,
-        h: cardH,
-        action: () => onPick(card),
-      });
-
-      let title = "";
-      let subtitle = "";
-      let desc = "";
-      let color = THEME.flow;
-      let connects = false;
-
-      if (card.kind === "echo") {
-        const t = TECH[card.tech];
-        if (t) {
-          title = t.name;
-          subtitle = `${t.family.toUpperCase()} • ECHO`;
-          desc = t.desc;
-          color = familyColor(t.family);
-          connects = t.receives.includes("ANY") || lastEmits.some((e) => t.receives.includes(e));
-        }
-      } else if (card.kind === "rank") {
-        const t = TECH[card.tech];
-        if (t) {
-          title = `${t.name} (RANK UP)`;
-          subtitle = "TECHNIQUE MASTERY";
-          desc = `Upgrades to next tier: ${t.rank3}`;
-          color = THEME.precision;
-        }
-      } else {
-        const s = SEAL[card.seal];
-        if (s) {
-          title = `${s.glyph} ${s.name}`;
-          subtitle = "RELIC SEAL";
-          desc = s.desc;
-          color = THEME.resonance;
-        }
-      }
-
-      // Card Container
-      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x, y, cardW, cardH, 10);
-      ctx.fill();
-      ctx.stroke();
-
-      // Card Header Banner
-      ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
-      ctx.beginPath();
-      ctx.roundRect(x, y, cardW, 56, [10, 10, 0, 0]);
-      ctx.fill();
-
-      // Card Subtitle
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.fillStyle = color;
-      ctx.textAlign = "center";
-      ctx.fillText(subtitle, x + cardW / 2, y + 22);
-
-      // Card Title
-      ctx.font = "bold 16px system-ui, sans-serif";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(title, x + cardW / 2, y + 42);
-
-      // Description text (wrapped)
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.fillStyle = "#cbd5e1";
-      this.renderWrappedText(ctx, desc, x + 16, y + 90, cardW - 32, 18);
-
-      // Synergy Indicator
-      if (card.kind === "echo" && connects) {
-        ctx.fillStyle = "rgba(16, 185, 129, 0.2)";
-        ctx.strokeStyle = THEME.healthGreen;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(x + 14, y + cardH - 80, cardW - 28, 26, 6);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = THEME.healthGreen;
-        ctx.font = "bold 10px system-ui, sans-serif";
-        ctx.fillText("✓ CONNECTS WITH TRAIL", x + cardW / 2, y + cardH - 63);
-      }
-
-      // Choose Button
-      const btnW = cardW - 32;
-      const btnH = 36;
-      const btnX = x + 16;
-      const btnY = y + cardH - 46;
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.roundRect(btnX, btnY, btnW, btnH, 6);
-      ctx.fill();
-
-      ctx.fillStyle = "#000000";
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.textBaseline = "middle";
-      ctx.fillText("SELECT", btnX + btnW / 2, btnY + btnH / 2);
-    });
-
-    // Skip Button
-    if (onSkip) {
-      const skipW = 140;
-      const skipH = 34;
-      const skipX = (width - skipW) / 2;
-      const skipY = height * 0.85;
-
-      this.clickZones.push({
-        id: "skip-draft",
-        x: skipX,
-        y: skipY,
-        w: skipW,
-        h: skipH,
-        action: onSkip,
-      });
-
-      ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(skipX, skipY, skipW, skipH, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = "#cbd5e1";
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.fillText("SKIP DRAFT", skipX + skipW / 2, skipY + skipH / 2);
-    }
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 3. TRAIL ORGANIZER (REORDERING & LINK CAUSALITY)
-  // ─────────────────────────────────────────────────────────────
-  renderOrganizer(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    run: RunState,
-    onMove: (fromIndex: number, toIndex: number) => void,
-    onContinue: () => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    // Dark backdrop
-    ctx.fillStyle = "rgba(7, 10, 16, 0.94)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 24px system-ui, sans-serif";
-    ctx.fillText("TRAIL CAUSALITY ENGINE", width / 2, height * 0.12);
-
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText("Events flow downstream (0 → 1 → 2 ...). Reorder echoes to maximize connected links.", width / 2, height * 0.16);
-
-    // Link analysis
-    const linkInfo = analyzeTrail(run.trail, run.form);
-
-    // Link Health Pill
-    const pillW = 320;
-    const pillH = 30;
-    const pillX = (width - pillW) / 2;
-    const pillY = height * 0.20;
-
-    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-    ctx.strokeStyle = linkInfo.longest === run.trail.length && run.trail.length > 0 ? THEME.healthGreen : THEME.precision;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(pillX, pillY, pillW, pillH, 15);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 11px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`CHAIN POTENTIAL: ${linkInfo.count} / ${run.trail.length} LINKS CONNECTED (MAX ${linkInfo.longest + 1})`, pillX + pillW / 2, pillY + pillH / 2);
-
-    // Slots Display: Slot 0 (Fighter) + Echoes
-    const totalSlots = run.trail.length + 1;
-    const slotW = Math.min(130, (width - 40) / Math.max(3, totalSlots));
-    const slotH = 170;
-    const spacing = 16;
-    const totalW = totalSlots * slotW + (totalSlots - 1) * spacing;
-    const startX = (width - totalW) / 2;
-    const startY = height * 0.32;
-
-    for (let slot = 0; slot < totalSlots; slot++) {
-      const x = startX + slot * (slotW + spacing);
-      const y = startY;
-      const isFighter = slot === 0;
-
-      let name = isFighter ? FORMS[run.form].name : "";
-      let family = "precision";
-      let rankText = "";
-      let desc = "";
-
-      if (isFighter) {
-        desc = `Emits: ${linkInfo.emits[0]?.join(", ")}`;
-      } else {
-        const item = run.trail[slot - 1]!;
-        const t = TECH[item.tech];
-        if (t) {
-          name = t.name;
-          family = t.family;
-          rankText = `RANK ${item.rank}`;
-          desc = t.desc;
-        }
-      }
-
-      const isLinked = isFighter || linkInfo.links[slot] === true;
-      const color = isFighter ? THEME.fighter : familyColor(family);
-
-      // Slot Box
-      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-      ctx.strokeStyle = isLinked ? color : "rgba(239, 68, 68, 0.6)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x, y, slotW, slotH, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      // Top Tag
-      ctx.fillStyle = color;
-      ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(isFighter ? "SLOT 0: FIGHTER" : `SLOT ${slot}`, x + slotW / 2, y + 20);
-
-      // Name
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.fillText(name, x + slotW / 2, y + 42);
-
-      // Rank
-      if (rankText) {
-        ctx.fillStyle = THEME.precision;
-        ctx.font = "bold 9px monospace";
-        ctx.fillText(rankText, x + slotW / 2, y + 58);
-      }
-
-      // Link status pill
-      if (!isFighter) {
-        ctx.fillStyle = isLinked ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)";
-        ctx.strokeStyle = isLinked ? THEME.healthGreen : THEME.healthRed;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(x + 10, y + 74, slotW - 20, 20, 4);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = isLinked ? THEME.healthGreen : THEME.healthRed;
-        ctx.font = "bold 9px system-ui, sans-serif";
-        ctx.fillText(isLinked ? "✓ LINKED" : "✗ UNLINKED", x + slotW / 2, y + 84);
-      }
-
-      // Description
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "10px system-ui, sans-serif";
-      this.renderWrappedText(ctx, desc, x + 8, y + 104, slotW - 16, 13);
-
-      // Reorder buttons for Echoes
-      if (!isFighter) {
-        const echoIdx = slot - 1;
-        const btnY = y + slotH - 32;
-
-        // Move Left
-        if (echoIdx > 0) {
-          const lX = x + 8;
-          this.clickZones.push({
-            id: `move-left-${echoIdx}`,
-            x: lX,
-            y: btnY,
-            w: 36,
-            h: 24,
-            action: () => onMove(echoIdx, echoIdx - 1),
-          });
-
-          ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-          ctx.beginPath();
-          ctx.roundRect(lX, btnY, 36, 24, 4);
-          ctx.fill();
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 12px system-ui, sans-serif";
-          ctx.fillText("◀", lX + 18, btnY + 12);
-        }
-
-        // Move Right
-        if (echoIdx < run.trail.length - 1) {
-          const rX = x + slotW - 44;
-          this.clickZones.push({
-            id: `move-right-${echoIdx}`,
-            x: rX,
-            y: btnY,
-            w: 36,
-            h: 24,
-            action: () => onMove(echoIdx, echoIdx + 1),
-          });
-
-          ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-          ctx.beginPath();
-          ctx.roundRect(rX, btnY, 36, 24, 4);
-          ctx.fill();
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 12px system-ui, sans-serif";
-          ctx.fillText("▶", rX + 18, btnY + 12);
-        }
-      }
-
-      // Arrow connecting to next slot
-      if (slot < totalSlots - 1) {
-        const nextLinked = linkInfo.links[slot + 1] === true;
-        const arrowX0 = x + slotW + 2;
-        const arrowX1 = arrowX0 + spacing - 4;
-        const arrowY = y + slotH / 2;
-
-        ctx.strokeStyle = nextLinked ? THEME.healthGreen : "rgba(239, 68, 68, 0.4)";
-        ctx.lineWidth = nextLinked ? 2 : 1;
-        ctx.beginPath();
-        ctx.moveTo(arrowX0, arrowY);
-        ctx.lineTo(arrowX1, arrowY);
-        ctx.lineTo(arrowX1 - 4, arrowY - 4);
-        ctx.moveTo(arrowX1, arrowY);
-        ctx.lineTo(arrowX1 - 4, arrowY + 4);
-        ctx.stroke();
-      }
-    }
-
-    // Continue / Start Encounter Button
-    const contW = 260;
-    const contH = 46;
-    const contX = (width - contW) / 2;
-    const contY = height * 0.78;
-
-    this.clickZones.push({
-      id: "organizer-continue",
-      x: contX,
-      y: contY,
-      w: contW,
-      h: contH,
-      action: onContinue,
-    });
-
-    ctx.fillStyle = THEME.precision;
-    ctx.beginPath();
-    ctx.roundRect(contX, contY, contW, contH, 8);
-    ctx.fill();
-
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 14px system-ui, sans-serif";
-    ctx.fillText("COMMENCE ENCOUNTER [SPACE / TAP]", contX + contW / 2, contY + contH / 2);
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 4. MAP FORK SELECTION SCREEN
-  // ─────────────────────────────────────────────────────────────
-  renderFork(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    options: MapNode[],
-    onPick: (index: number) => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    ctx.fillStyle = "rgba(4, 7, 13, 0.92)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 26px system-ui, sans-serif";
-    ctx.fillText("CHOOSE YOUR PATH", width / 2, height * 0.22);
-
-    ctx.font = "13px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText("Select which encounter or sanctuary to march toward", width / 2, height * 0.28);
-
-    const cardW = Math.min(260, (width - 60) / options.length);
-    const cardH = 220;
-    const spacing = 30;
-    const totalW = options.length * cardW + (options.length - 1) * spacing;
-    const startX = (width - totalW) / 2;
-    const startY = height * 0.36;
-
-    options.forEach((opt, i) => {
-      const x = startX + i * (cardW + spacing);
-      const y = startY;
-
-      this.clickZones.push({
-        id: `fork-${i}`,
-        x,
-        y,
-        w: cardW,
-        h: cardH,
-        action: () => onPick(i),
-      });
-
-      let title = opt.type.toUpperCase();
-      let color = THEME.flow;
-      let desc = "Standard encounter";
-
-      if (opt.type === "fight") {
-        title = `${opt.family?.toUpperCase() ?? "ENEMY"} SQUAD`;
-        color = THEME.flow;
-        desc = "Standard combat encounter. Grants Echo Draft.";
-      } else if (opt.type === "elite") {
-        title = "ELITE VANGUARD";
-        color = THEME.enemyElite;
-        desc = "Dangerous commander. Grants Echo Draft & Slot milestone.";
-      } else if (opt.type === "boss") {
-        title = "ACT BOSS";
-        color = THEME.enemyBoss;
-        desc = "Formidable apex entity. Proof of mastery required.";
-      } else if (opt.type === "forge") {
-        title = "ECHO FORGE";
-        color = THEME.precision;
-        desc = "Sanctuary. Temper an existing Echo to Rank II or III.";
-      } else if (opt.type === "rest") {
-        title = "REST SITE";
-        color = THEME.healthGreen;
-        desc = "Sanctuary. Recover 35% Max HP or meditate.";
-      }
-
-      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x, y, cardW, cardH, 10);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.font = "bold 18px system-ui, sans-serif";
-      ctx.fillStyle = color;
-      ctx.fillText(title, x + cardW / 2, y + 46);
-
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.fillStyle = "#cbd5e1";
-      this.renderWrappedText(ctx, desc, x + 20, y + 80, cardW - 40, 18);
-
-      const btnW = cardW - 40;
-      const btnH = 40;
-      const btnX = x + 20;
-      const btnY = y + cardH - 56;
-
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.roundRect(btnX, btnY, btnW, btnH, 6);
-      ctx.fill();
-
-      ctx.fillStyle = "#000000";
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.textBaseline = "middle";
-      ctx.fillText("ADVANCE", btnX + btnW / 2, btnY + btnH / 2);
-    });
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 5. REST SITE SCREEN
-  // ─────────────────────────────────────────────────────────────
-  renderRest(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    run: RunState,
-    onRestChoice: (heal: boolean) => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    ctx.fillStyle = "rgba(4, 7, 13, 0.92)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 26px system-ui, sans-serif";
-    ctx.fillText("REST SITE", width / 2, height * 0.22);
-
-    ctx.font = "13px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText(`Current Health: ${Math.round(run.hp)} / ${run.maxHp} HP`, width / 2, height * 0.28);
-
-    const cardW = 240;
-    const cardH = 200;
-    const spacing = 30;
-    const startX = (width - (cardW * 2 + spacing)) / 2;
-    const startY = height * 0.36;
-
-    // Option 1: Rest & Heal
-    const healX = startX;
-    this.clickZones.push({
-      id: "rest-heal",
-      x: healX,
-      y: startY,
-      w: cardW,
-      h: cardH,
-      action: () => onRestChoice(true),
-    });
-
-    ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-    ctx.strokeStyle = THEME.healthGreen;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(healX, startY, cardW, cardH, 10);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.font = "bold 18px system-ui, sans-serif";
-    ctx.fillStyle = THEME.healthGreen;
-    ctx.fillText("REST & RECOVER", healX + cardW / 2, startY + 44);
-
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.fillStyle = "#cbd5e1";
-    ctx.fillText(`Heal 35% of max HP (+${Math.round(run.maxHp * 0.35)} HP)`, healX + cardW / 2, startY + 85);
-
-    ctx.fillStyle = THEME.healthGreen;
-    ctx.beginPath();
-    ctx.roundRect(healX + 20, startY + cardH - 54, cardW - 40, 36, 6);
-    ctx.fill();
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText("REST", healX + cardW / 2, startY + cardH - 36);
-
-    // Option 2: Meditate
-    const medX = startX + cardW + spacing;
-    this.clickZones.push({
-      id: "rest-meditate",
-      x: medX,
-      y: startY,
-      w: cardW,
-      h: cardH,
-      action: () => onRestChoice(false),
-    });
-
-    ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-    ctx.strokeStyle = THEME.precision;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(medX, startY, cardW, cardH, 10);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.font = "bold 18px system-ui, sans-serif";
-    ctx.fillStyle = THEME.precision;
-    ctx.fillText("MEDITATE", medX + cardW / 2, startY + 44);
-
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.fillStyle = "#cbd5e1";
-    ctx.fillText("Focus kinetic spirit and march forward refreshed.", medX + cardW / 2, startY + 85);
-
-    ctx.fillStyle = THEME.precision;
-    ctx.beginPath();
-    ctx.roundRect(medX + 20, startY + cardH - 54, cardW - 40, 36, 6);
-    ctx.fill();
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText("MEDITATE", medX + cardW / 2, startY + cardH - 36);
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 6. FORGE SCREEN
-  // ─────────────────────────────────────────────────────────────
-  renderForge(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    run: RunState,
-    onForgeSlot: (slot: number) => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    ctx.fillStyle = "rgba(4, 7, 13, 0.92)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 26px system-ui, sans-serif";
-    ctx.fillText("ECHO FORGE", width / 2, height * 0.20);
-
-    ctx.font = "13px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText("Select an equipped Echo to elevate its rank.", width / 2, height * 0.25);
-
-    const slotW = Math.min(180, (width - 60) / Math.max(1, run.trail.length));
-    const slotH = 200;
-    const spacing = 16;
-    const totalW = run.trail.length * slotW + (run.trail.length - 1) * spacing;
-    const startX = (width - totalW) / 2;
-    const startY = height * 0.35;
-
-    run.trail.forEach((item, slot) => {
-      const x = startX + slot * (slotW + spacing);
-      const y = startY;
-      const t = TECH[item.tech];
-      const color = t ? familyColor(t.family) : THEME.flow;
-      const canUpgrade = item.rank < 3;
-
-      if (canUpgrade) {
-        this.clickZones.push({
-          id: `forge-slot-${slot}`,
-          x,
-          y,
-          w: slotW,
-          h: slotH,
-          action: () => onForgeSlot(slot),
-        });
-      }
-
-      ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-      ctx.strokeStyle = canUpgrade ? color : "rgba(255, 255, 255, 0.2)";
-      ctx.lineWidth = canUpgrade ? 2 : 1;
-      ctx.beginPath();
-      ctx.roundRect(x, y, slotW, slotH, 8);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.font = "bold 14px system-ui, sans-serif";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(t?.name ?? item.tech, x + slotW / 2, y + 36);
-
-      ctx.font = "bold 11px monospace";
-      ctx.fillStyle = THEME.precision;
-      ctx.fillText(`CURRENT: RANK ${item.rank}`, x + slotW / 2, y + 62);
-
-      if (canUpgrade) {
-        ctx.font = "11px system-ui, sans-serif";
-        ctx.fillStyle = THEME.healthGreen;
-        ctx.fillText(`➜ UPGRADE TO RANK ${item.rank + 1}`, x + slotW / 2, y + 88);
-
-        ctx.font = "10px system-ui, sans-serif";
-        ctx.fillStyle = "#94a3b8";
-        this.renderWrappedText(ctx, t?.rank3 ?? "", x + 12, y + 112, slotW - 24, 13);
-
-        const btnW = slotW - 24;
-        const btnH = 34;
-        const btnX = x + 12;
-        const btnY = y + slotH - 44;
-
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(btnX, btnY, btnW, btnH, 6);
-        ctx.fill();
-
-        ctx.fillStyle = "#000000";
-        ctx.font = "bold 12px system-ui, sans-serif";
-        ctx.textBaseline = "middle";
-        ctx.fillText("FORGE", btnX + btnW / 2, btnY + btnH / 2);
-      } else {
-        ctx.font = "bold 12px system-ui, sans-serif";
-        ctx.fillStyle = "#64748b";
-        ctx.fillText("MAX RANK", x + slotW / 2, y + 110);
-      }
-    });
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 7. PAUSE MENU & SETTINGS SCREEN
-  // ─────────────────────────────────────────────────────────────
-  renderPause(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    settings: GameSettings,
-    onResume: () => void,
-    onToggleMute: () => void,
-    onChangeVolume: (delta: number) => void,
-    onChangeShake: (delta: number) => void,
-    onOpenCodex: () => void,
-    onAbandon: () => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    // Dark translucent backdrop
-    ctx.fillStyle = "rgba(4, 7, 13, 0.88)";
-    ctx.fillRect(0, 0, width, height);
-
-    // Modal Card
-    const cardW = Math.min(360, width * 0.88);
-    const cardH = 380;
-    const cardX = (width - cardW) / 2;
-    const cardY = (height - cardH) / 2;
-
-    ctx.fillStyle = "rgba(15, 23, 42, 0.96)";
-    ctx.strokeStyle = THEME.precision;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(cardX, cardY, cardW, cardH, 12);
-    ctx.fill();
-    ctx.stroke();
-
-    // Title
-    ctx.textAlign = "center";
-    ctx.font = "bold 22px system-ui, sans-serif";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText("PAUSED", width / 2, cardY + 40);
-
-    // 1. Resume Button
-    const btnW = cardW - 48;
-    const btnH = 38;
-    const btnX = cardX + 24;
-
-    let curY = cardY + 68;
-    this.clickZones.push({
-      id: "pause-resume",
-      x: btnX,
-      y: curY,
-      w: btnW,
-      h: btnH,
-      action: onResume,
-    });
-    ctx.fillStyle = THEME.precision;
-    ctx.beginPath();
-    ctx.roundRect(btnX, curY, btnW, btnH, 6);
-    ctx.fill();
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 13px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText("RESUME EXPEDITION [ESC]", btnX + btnW / 2, curY + btnH / 2);
-
-    // 2. Volume Row
-    curY += 52;
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText("MASTER VOLUME", btnX, curY + 12);
-
-    // [-] button
-    const volMinusX = btnX + btnW - 110;
-    this.clickZones.push({
-      id: "vol-minus",
-      x: volMinusX,
-      y: curY - 2,
-      w: 28,
-      h: 28,
-      action: () => onChangeVolume(-0.1),
-    });
-    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-    ctx.beginPath();
-    ctx.roundRect(volMinusX, curY - 2, 28, 28, 4);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 14px monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("-", volMinusX + 14, curY + 12);
-
-    // Vol value
-    ctx.font = "bold 12px monospace";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(`${Math.round(settings.volume * 100)}%`, volMinusX + 54, curY + 12);
-
-    // [+] button
-    const volPlusX = btnX + btnW - 30;
-    this.clickZones.push({
-      id: "vol-plus",
-      x: volPlusX,
-      y: curY - 2,
-      w: 28,
-      h: 28,
-      action: () => onChangeVolume(0.1),
-    });
-    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-    ctx.beginPath();
-    ctx.roundRect(volPlusX, curY - 2, 28, 28, 4);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 14px monospace";
-    ctx.fillText("+", volPlusX + 14, curY + 12);
-
-    // 3. Screen Shake Row
-    curY += 46;
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = "12px system-ui, sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText("SCREEN SHAKE", btnX, curY + 12);
-
-    // Shake [-] button
-    this.clickZones.push({
-      id: "shake-minus",
-      x: volMinusX,
-      y: curY - 2,
-      w: 28,
-      h: 28,
-      action: () => onChangeShake(-0.25),
-    });
-    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-    ctx.beginPath();
-    ctx.roundRect(volMinusX, curY - 2, 28, 28, 4);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 14px monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("-", volMinusX + 14, curY + 12);
-
-    // Shake value
-    ctx.font = "bold 12px monospace";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(`${Math.round(settings.screenShake * 100)}%`, volMinusX + 54, curY + 12);
-
-    // Shake [+] button
-    this.clickZones.push({
-      id: "shake-plus",
-      x: volPlusX,
-      y: curY - 2,
-      w: 28,
-      h: 28,
-      action: () => onChangeShake(0.25),
-    });
-    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-    ctx.beginPath();
-    ctx.roundRect(volPlusX, curY - 2, 28, 28, 4);
-    ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 14px monospace";
-    ctx.fillText("+", volPlusX + 14, curY + 12);
-
-    // 4. Mute Toggle
-    curY += 46;
-    this.clickZones.push({
-      id: "pause-mute",
-      x: btnX,
-      y: curY,
-      w: btnW,
-      h: 32,
-      action: onToggleMute,
-    });
-    ctx.fillStyle = "rgba(30, 41, 59, 0.8)";
-    ctx.beginPath();
-    ctx.roundRect(btnX, curY, btnW, 32, 6);
-    ctx.fill();
-    ctx.fillStyle = settings.muted ? THEME.healthRed : THEME.flow;
-    ctx.font = "bold 11px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(settings.muted ? "AUDIO: MUTED (TAP TO UNMUTE)" : "AUDIO: ACTIVE (TAP TO MUTE)", btnX + btnW / 2, curY + 16);
-
-    // 5. Open Codex Button
-    curY += 44;
-    this.clickZones.push({
-      id: "pause-codex",
-      x: btnX,
-      y: curY,
-      w: btnW,
-      h: 34,
-      action: onOpenCodex,
-    });
-    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-    ctx.strokeStyle = THEME.precision;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(btnX, curY, btnW, 34, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.fillText("📖 VIEW COMBO CODEX", btnX + btnW / 2, curY + 17);
-
-    // 6. Abandon Run Button
-    curY += 44;
-    this.clickZones.push({
-      id: "pause-abandon",
-      x: btnX,
-      y: curY,
-      w: btnW,
-      h: 32,
-      action: onAbandon,
-    });
-    ctx.fillStyle = "rgba(220, 38, 38, 0.2)";
-    ctx.strokeStyle = THEME.healthRed;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(btnX, curY, btnW, 32, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = THEME.healthRed;
-    ctx.font = "bold 11px system-ui, sans-serif";
-    ctx.fillText("ABANDON EXPEDITION", btnX + btnW / 2, curY + 16);
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 8. CODEX / COMBO COMPENDIUM SCREEN
-  // ─────────────────────────────────────────────────────────────
-  renderCodex(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    discoveredCombos: string[],
-    unlockedAchievements: string[],
-    leaderboard: LeaderboardEntry[],
-    onClose: () => void,
-    onExportSave?: () => void,
-    onImportSave?: (code: string) => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    // Dark backdrop
-    ctx.fillStyle = "rgba(7, 10, 16, 0.96)";
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 24px system-ui, sans-serif";
-    ctx.fillText("COMBO CODEX & ARCHIVES", width / 2, 38);
-
-    // Close Button top-right
-    const closeBtnW = 100;
-    const closeBtnH = 32;
-    const closeBtnX = width - closeBtnW - 20;
-    const closeBtnY = 24;
-
-    this.clickZones.push({
-      id: "close-codex",
-      x: closeBtnX,
-      y: closeBtnY,
-      w: closeBtnW,
-      h: closeBtnH,
-      action: onClose,
-    });
-
-    ctx.fillStyle = THEME.precision;
-    ctx.beginPath();
-    ctx.roundRect(closeBtnX, closeBtnY, closeBtnW, closeBtnH, 6);
-    ctx.fill();
-    ctx.fillStyle = "#000000";
-    ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    ctx.fillText("CLOSE [ESC]", closeBtnX + closeBtnW / 2, closeBtnY + closeBtnH / 2);
-
-    // 4 Tabs: COMBOS, TROPHIES, HALL OF FAME, CLOUD & SAVE
-    const tabW = Math.min(150, (width - 40) / 4);
-    const tabH = 30;
-    const tabY = 56;
-    const tabSpacing = 6;
-    const totalTabW = tabW * 4 + tabSpacing * 3;
-    const tabStartX = (width - totalTabW) / 2;
-
-    const tabs: { id: "combos" | "achievements" | "leaderboard" | "data"; label: string; color: string }[] = [
-      { id: "combos", label: "📖 COMBOS", color: THEME.flow },
-      { id: "achievements", label: `🏆 TROPHIES (${unlockedAchievements.length}/${ACHIEVEMENTS.length})`, color: "#fbbf24" },
-      { id: "leaderboard", label: "⚡ HALL OF FAME", color: THEME.precision },
-      { id: "data", label: "💾 DATA & BACKUP", color: THEME.momentum },
-    ];
-
-    tabs.forEach((tab, idx) => {
-      const tx = tabStartX + idx * (tabW + tabSpacing);
-      const isSel = this.codexTab === tab.id;
-
-      this.clickZones.push({
-        id: `codex-tab-${tab.id}`,
-        x: tx,
-        y: tabY,
-        w: tabW,
-        h: tabH,
-        action: () => { this.codexTab = tab.id; },
-      });
-
-      ctx.fillStyle = isSel ? "rgba(30, 41, 59, 0.9)" : "rgba(15, 23, 42, 0.6)";
-      ctx.strokeStyle = isSel ? tab.color : "rgba(255, 255, 255, 0.15)";
-      ctx.lineWidth = isSel ? 2 : 1;
-      ctx.beginPath();
-      ctx.roundRect(tx, tabY, tabW, tabH, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.font = `bold ${isSel ? "11px" : "10px"} system-ui, sans-serif`;
-      ctx.fillStyle = isSel ? "#ffffff" : "#94a3b8";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(tab.label, tx + tabW / 2, tabY + tabH / 2);
-    });
-
-    if (this.codexTab === "combos") {
-      // Section 1: The 4 Legendary Combos
-      ctx.textAlign = "left";
-      ctx.fillStyle = THEME.precision;
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.fillText("LEGENDARY SYNERGY SEQUENCES (GDD §6)", 30, 110);
-
-      const comboCardW = Math.min(260, (width - 80) / 2);
-      const comboCardH = 92;
-      const startY = 124;
-
-      GDD_COMBOS.forEach((spec, i) => {
-        const col = i % 2;
-        const row = Math.floor(i / 2);
-        const x = 30 + col * (comboCardW + 20);
-        const y = startY + row * (comboCardH + 12);
-
-        const isDiscovered = discoveredCombos.includes(spec.name);
-
-        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-        ctx.strokeStyle = isDiscovered ? THEME.precision : "rgba(255, 255, 255, 0.15)";
-        ctx.lineWidth = isDiscovered ? 1.5 : 1;
-        ctx.beginPath();
-        ctx.roundRect(x, y, comboCardW, comboCardH, 8);
-        ctx.fill();
-        ctx.stroke();
-
-        // Combo Name & Badge
-        ctx.font = "bold 13px system-ui, sans-serif";
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText(spec.name.toUpperCase(), x + 12, y + 22);
-
-        ctx.textAlign = "right";
-        ctx.font = "bold 10px monospace";
-        ctx.fillStyle = isDiscovered ? THEME.healthGreen : "#64748b";
-        ctx.fillText(isDiscovered ? "✓ DISCOVERED" : "🔒 LOCKED", x + comboCardW - 12, y + 22);
-
-        // Sequence Trail
-        ctx.textAlign = "left";
-        ctx.font = "bold 11px monospace";
-        ctx.fillStyle = THEME.flow;
-        ctx.fillText(spec.trail.join(" ➔ "), x + 12, y + 44);
-
-        // Claim Description
-        ctx.font = "10px system-ui, sans-serif";
-        ctx.fillStyle = "#cbd5e1";
-        this.renderWrappedText(ctx, spec.claim, x + 12, y + 62, comboCardW - 24, 13);
-      });
-
-      // Section 2: Technique Compendium Grid
-      const techStartY = startY + 2 * (comboCardH + 12) + 20;
-      ctx.textAlign = "left";
-      ctx.fillStyle = THEME.flow;
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.fillText("AUTHORITATIVE TECHNIQUE ARCHETYPES", 30, techStartY);
-
-      const techCardW = Math.min(180, (width - 70) / 4);
-      const techCardH = 72;
-      const gridStartY = techStartY + 14;
-
-      TECHNIQUES.slice(0, 8).forEach((tech, i) => {
-        const col = i % 4;
-        const row = Math.floor(i / 4);
-        const x = 30 + col * (techCardW + 10);
-        const y = gridStartY + row * (techCardH + 10);
-        const color = familyColor(tech.family);
-
-        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(x, y, techCardW, techCardH, 6);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.font = "bold 12px system-ui, sans-serif";
-        ctx.fillStyle = color;
-        ctx.fillText(tech.name, x + 10, y + 20);
-
-        ctx.font = "9px monospace";
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillText(`IN: ${tech.receives.join(",")} ➜ OUT: ${tech.emits.join(",")}`, x + 10, y + 36);
-
-        ctx.font = "10px system-ui, sans-serif";
-        ctx.fillStyle = "#cbd5e1";
-        this.renderWrappedText(ctx, tech.desc, x + 10, y + 52, techCardW - 20, 12);
-      });
-    } else {
-      // ACHIEVEMENTS TAB
-      const achCardW = Math.min(360, (width - 60) / 2);
-      const achCardH = 68;
-      const startY = 114;
-
-      ACHIEVEMENTS.forEach((ach, i) => {
-        const col = i % 2;
-        const row = Math.floor(i / 2);
-        const x = (width - (achCardW * 2 + 20)) / 2 + col * (achCardW + 20);
-        const y = startY + row * (achCardH + 12);
-        const isUnlocked = unlockedAchievements.includes(ach.id);
-
-        ctx.fillStyle = isUnlocked ? "rgba(15, 23, 42, 0.9)" : "rgba(15, 23, 42, 0.55)";
-        ctx.strokeStyle = isUnlocked ? "#fbbf24" : "rgba(255, 255, 255, 0.1)";
-        ctx.lineWidth = isUnlocked ? 1.5 : 1;
-        ctx.beginPath();
-        ctx.roundRect(x, y, achCardW, achCardH, 8);
-        ctx.fill();
-        ctx.stroke();
-
-        // Icon
-        ctx.font = "24px system-ui, sans-serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(isUnlocked ? ach.icon : "🔒", x + 30, y + achCardH / 2);
-
-        // Title
-        ctx.textAlign = "left";
-        ctx.font = "bold 13px system-ui, sans-serif";
-        ctx.fillStyle = isUnlocked ? "#ffffff" : "#64748b";
-        ctx.fillText(ach.title, x + 58, y + 22);
-
-        // Status badge
-        ctx.textAlign = "right";
-        ctx.font = "bold 10px monospace";
-        ctx.fillStyle = isUnlocked ? THEME.healthGreen : "#ef4444";
-        ctx.fillText(isUnlocked ? "✓ UNLOCKED" : "LOCKED", x + achCardW - 14, y + 22);
-
-        // Description
-        ctx.textAlign = "left";
-        ctx.font = "11px system-ui, sans-serif";
-        ctx.fillStyle = isUnlocked ? "#cbd5e1" : "#64748b";
-        ctx.fillText(ach.desc, x + 58, y + 46);
-      });
-    }
-
-    if (this.codexTab === "leaderboard") {
-      ctx.textAlign = "center";
-      ctx.fillStyle = THEME.precision;
-      ctx.font = "bold 14px system-ui, sans-serif";
-      ctx.fillText("⚡ LOCAL EXPEDITION HALL OF FAME & SPEEDRUN RECORDS", width / 2, 105);
-
-      if (!leaderboard || leaderboard.length === 0) {
-        ctx.fillStyle = "#64748b";
-        ctx.font = "13px system-ui, sans-serif";
-        ctx.fillText("No expeditions recorded yet. Complete an expedition to enshrine your score!", width / 2, 180);
-      } else {
-        const tableY = 125;
-        const rowH = 26;
-        const colWidths = [45, 90, 75, 50, 75, 55, 60, 65, 110];
-        const headers = ["#", "MODE", "FORM", "ASC", "SCORE", "KILLS", "CHAIN", "TIME", "DATE"];
-        const tableW = colWidths.reduce((a, b) => a + b, 0);
-        const startX = (width - tableW) / 2;
-
-        // Header Row
-        let hx = startX;
-        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-        ctx.fillRect(startX, tableY, tableW, rowH);
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-        ctx.strokeRect(startX, tableY, tableW, rowH);
-
-        ctx.font = "bold 11px system-ui, sans-serif";
-        ctx.fillStyle = "#94a3b8";
-        ctx.textBaseline = "middle";
-        headers.forEach((h, idx) => {
-          ctx.textAlign = idx === 0 ? "center" : "left";
-          const px = idx === 0 ? hx + colWidths[idx]! / 2 : hx + 8;
-          ctx.fillText(h, px, tableY + rowH / 2);
-          hx += colWidths[idx]!;
-        });
-
-        // Entries (Top 10 display)
-        const entries = leaderboard.slice(0, 10);
-        entries.forEach((entry, rowIdx) => {
-          const ry = tableY + (rowIdx + 1) * rowH;
-          let rx = startX;
-
-          ctx.fillStyle = rowIdx % 2 === 0 ? "rgba(30, 41, 59, 0.4)" : "rgba(15, 23, 42, 0.6)";
-          ctx.fillRect(startX, ry, tableW, rowH);
-
-          const isTop3 = rowIdx < 3;
-          ctx.font = isTop3 ? "bold 11px monospace" : "11px monospace";
-          ctx.fillStyle = isTop3 ? "#fbbf24" : (entry.won ? THEME.healthGreen : "#cbd5e1");
-
-          const rowData = [
-            `#${rowIdx + 1}`,
-            entry.mode.toUpperCase(),
-            entry.form.toUpperCase(),
-            `A${entry.ascension}`,
-            entry.score.toLocaleString(),
-            `${entry.kills}`,
-            `${entry.longestChain}`,
-            `${(entry.durationMs / 1000).toFixed(1)}s`,
-            entry.date,
-          ];
-
-          rowData.forEach((val, cIdx) => {
-            ctx.textAlign = cIdx === 0 ? "center" : "left";
-            const px = cIdx === 0 ? rx + colWidths[cIdx]! / 2 : rx + 8;
-            ctx.fillText(val, px, ry + rowH / 2);
-            rx += colWidths[cIdx]!;
-          });
-        });
-      }
-    }
-
-    if (this.codexTab === "data") {
-      ctx.textAlign = "center";
-      ctx.fillStyle = THEME.precision;
-      ctx.font = "bold 14px system-ui, sans-serif";
-      ctx.fillText("💾 SAVE DATA BACKUP & CLOUD TRANSFER", width / 2, 110);
-
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.fillText("Backup your unlocked forms, achievements, and hall of fame records across devices.", width / 2, 134);
-
-      const boxW = Math.min(420, width - 60);
-      const boxH = 50;
-      const boxX = (width - boxW) / 2;
-
-      // Export Button
-      const expY = 170;
-      this.clickZones.push({
-        id: "save-export-btn",
-        x: boxX,
-        y: expY,
-        w: boxW,
-        h: boxH,
-        action: () => {
-          onExportSave?.();
-        },
-      });
-      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-      ctx.strokeStyle = THEME.flow;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(boxX, expY, boxW, boxH, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.fillText("📋 EXPORT SAVE [COPY BACKUP STRING]", width / 2, expY + 20);
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "10px system-ui, sans-serif";
-      ctx.fillText("Copies your entire game save string to your system clipboard", width / 2, expY + 36);
-
-      // Import Button
-      const impY = 236;
-      this.clickZones.push({
-        id: "save-import-btn",
-        x: boxX,
-        y: impY,
-        w: boxW,
-        h: boxH,
-        action: () => {
-          const code = prompt("Paste your exported save string here:");
-          if (code) {
-            onImportSave?.(code);
-          }
-        },
-      });
-      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-      ctx.strokeStyle = THEME.precision;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(boxX, impY, boxW, boxH, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.fillText("📥 IMPORT SAVE [RESTORE FROM BACKUP]", width / 2, impY + 20);
-      ctx.fillStyle = "#94a3b8";
-      ctx.font = "10px system-ui, sans-serif";
-      ctx.fillText("Restores your unlocks, Ascension rank, and trophies from backup", width / 2, impY + 36);
-    }
-
-    ctx.restore();
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // TEXT WRAPPING HELPER
-  // ─────────────────────────────────────────────────────────────
-  private renderWrappedText(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    maxWidth: number,
-    lineHeight: number
-  ): void {
-    const words = text.split(" ");
-    let line = "";
-    let curY = y;
-
-    for (let n = 0; n < words.length; n++) {
-      const testLine = line + words[n] + " ";
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxWidth && n > 0) {
-        ctx.fillText(line, x + maxWidth / 2, curY);
-        line = words[n] + " ";
-        curY += lineHeight;
-      } else {
-        line = testLine;
-      }
-    }
-    ctx.fillText(line, x + maxWidth / 2, curY);
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // 9. VICTORY / DEFEAT RUN SUMMARY SCREEN
-  // ─────────────────────────────────────────────────────────────
-  renderRunSummary(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    run: RunState,
-    isVictory: boolean,
-    onReturnTitle: () => void,
-    onReplay?: () => void
-  ): void {
-    this.resetZones();
-    ctx.save();
-
-    // Dark background with color radial glow
-    ctx.fillStyle = THEME.bgDark;
-    ctx.fillRect(0, 0, width, height);
-
-    const grad = ctx.createRadialGradient(width / 2, height / 2, 60, width / 2, height / 2, width * 0.55);
-    grad.addColorStop(0, isVictory ? "rgba(16, 185, 129, 0.25)" : "rgba(239, 68, 68, 0.2)");
-    grad.addColorStop(1, "rgba(9, 10, 15, 0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-
-    // Card Box
-    const cardW = Math.min(500, width - 40);
-    const cardH = 370;
-    const cardX = (width - cardW) / 2;
-    const cardY = (height - cardH) / 2;
-
-    ctx.fillStyle = "rgba(15, 23, 42, 0.95)";
-    ctx.strokeStyle = isVictory ? THEME.healthGreen : THEME.healthRed;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(cardX, cardY, cardW, cardH, 12);
-    ctx.fill();
-    ctx.stroke();
-
-    // Title
-    ctx.textAlign = "center";
-    ctx.font = "900 28px system-ui, sans-serif";
-    ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.healthRed;
-    ctx.fillText(isVictory ? "✦ EXPEDITION CONQUERED ✦" : "✦ EXPEDITION TERMINATED ✦", width / 2, cardY + 44);
-
-    // Subtitle
-    ctx.font = "13px system-ui, sans-serif";
-    ctx.fillStyle = "#94a3b8";
-    const sub = isVictory
-      ? (run.mode === "endless" ? `Endless Abyss reached Depth ${run.endlessDepth}!` : `Act 3 Boss Defeated on Ascension ${run.ascension}!`)
-      : `Fell in Act ${run.act} (Ascension ${run.ascension})`;
-    ctx.fillText(sub, width / 2, cardY + 70);
-
-    // Score Banner
-    const score = (run.stats.kills * 150) + (run.stats.longestChain * 300) + (isVictory ? 5000 : 0) + (run.ascension * 400);
-    ctx.font = "bold 15px system-ui, sans-serif";
-    ctx.fillStyle = "#fbbf24";
-    ctx.fillText(`EXPEDITION SCORE: ${score.toLocaleString()}`, width / 2, cardY + 95);
-
-    // Stats Grid
-    const statY = cardY + 128;
-    ctx.font = "12px monospace";
-    ctx.fillStyle = "#cbd5e1";
-    ctx.fillText(`KILLS: ${run.stats.kills}`, width / 2 - 100, statY);
-    ctx.fillText(`FIGHTS WON: ${run.stats.fightsWon}`, width / 2 + 100, statY);
-    ctx.fillText(`LONGEST CHAIN: ${run.stats.longestChain}`, width / 2 - 100, statY + 26);
-    ctx.fillText(`PARRIES: ${run.stats.parries}`, width / 2 + 100, statY + 26);
-    ctx.fillText(`STAGGERS: ${run.stats.staggers}`, width / 2 - 100, statY + 52);
-    ctx.fillText(`CRITS: ${run.stats.crits}`, width / 2 + 100, statY + 52);
-
-    // Seed with Copy Button
-    const seedY = cardY + 232;
-    ctx.font = "11px monospace";
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText(`SEED: ${run.seed} [📋 CLICK TO COPY]`, width / 2, seedY);
-
-    this.clickZones.push({
-      id: "summary-copy-seed",
-      x: width / 2 - 140,
-      y: seedY - 12,
-      w: 280,
-      h: 22,
-      action: () => {
-        if (typeof navigator !== "undefined" && navigator.clipboard) {
-          navigator.clipboard.writeText(run.seed);
-        }
-      },
-    });
-
-    // Unlocks / Progression note
-    if (isVictory) {
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.fillStyle = THEME.precision;
-      if (run.ascension < 10) {
-        ctx.fillText(`★ UNLOCKED: Ascension ${run.ascension + 1} difficulty tier!`, width / 2, cardY + 262);
-      } else {
-        ctx.fillText("★ MAXIMUM ASCENSION (A10) CLEARED! MASTER OF THE TRAIL!", width / 2, cardY + 262);
-      }
-    }
-
-    // Buttons at bottom (Replay & Return)
-    const btnH = 40;
-    const btnY = cardY + cardH - 58;
-
-    if (onReplay) {
-      const replayW = 160;
-      const returnW = 190;
-      const spacing = 14;
-      const totalBtnW = replayW + returnW + spacing;
-      const startBtnX = (width - totalBtnW) / 2;
-
-      // Replay Button
-      this.clickZones.push({
-        id: "summary-replay-btn",
-        x: startBtnX,
-        y: btnY,
-        w: replayW,
-        h: btnH,
-        action: onReplay,
-      });
-      ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-      ctx.strokeStyle = THEME.flow;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(startBtnX, btnY, replayW, btnH, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.textBaseline = "middle";
-      ctx.fillText("🔁 REPLAY RUN", startBtnX + replayW / 2, btnY + btnH / 2);
-
-      // Return Button
-      const retX = startBtnX + replayW + spacing;
-      this.clickZones.push({
-        id: "summary-title-btn",
-        x: retX,
-        y: btnY,
-        w: returnW,
-        h: btnH,
-        action: onReturnTitle,
-      });
-      ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.precision;
-      ctx.beginPath();
-      ctx.roundRect(retX, btnY, returnW, btnH, 8);
-      ctx.fill();
-      ctx.fillStyle = "#000000";
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.fillText("RETURN TO TITLE", retX + returnW / 2, btnY + btnH / 2);
-    } else {
-      const btnW = 240;
-      const btnX = (width - btnW) / 2;
-
-      this.clickZones.push({
-        id: "summary-title-btn",
-        x: btnX,
-        y: btnY,
-        w: btnW,
-        h: btnH,
-        action: onReturnTitle,
-      });
-
-      ctx.fillStyle = isVictory ? THEME.healthGreen : THEME.precision;
-      ctx.beginPath();
-      ctx.roundRect(btnX, btnY, btnW, btnH, 8);
-      ctx.fill();
-
-      ctx.fillStyle = "#000000";
-      ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.textBaseline = "middle";
-      ctx.fillText("RETURN TO TITLE [SPACE / TAP]", btnX + btnW / 2, btnY + btnH / 2);
-    }
-
-    ctx.restore();
-  }
+    sync();
+    mount(s);
+  });
 }
+
+// ───────────────────────── Draft
+export interface DraftOpts { title: string; kicker?: string; banner?: string; sub?: string }
+
+function cardEl(card: DraftCard, run: RunState, idx: number): HTMLElement {
+  if (card.kind === "seal") {
+    const d = SEAL[card.seal]!;
+    const c = el("div", "card seal");
+    c.innerHTML = `<span class="key">${idx + 1}</span><div class="glyph">${d.glyph}</div><div class="meta">Seal · Run passive</div><div class="name">${d.name}</div><div class="desc">${d.desc}</div><div class="hint good"><i class="dot"></i>Lasts the whole run</div>`;
+    return c;
+  }
+  const t = TECH[card.tech]!;
+  const c = el("div", `card ${famClass(card.tech)}`);
+  const owned = run.trail.find((s) => s.tech === card.tech);
+  let hint = "";
+  let good = false;
+  if (card.kind === "rank") {
+    const r = owned?.rank ?? 1;
+    hint = `Rank ${ROMAN[r]} → ${ROMAN[r + 1]}${r + 1 === 3 ? ` · unlocks: ${t.rank3}` : " · +50% output"}`;
+    good = true;
+  } else if (run.trail.length < run.slots) {
+    const test = analyzeTrail([...run.trail, { tech: card.tech, rank: 1 }], run.form);
+    const j = run.trail.length + 1;
+    const prev = j === 1 ? FORMS[run.form].name : TECH[run.trail[j - 2]!.tech]!.name;
+    if (t.receives.includes("ENEMY_ATTACK")) { hint = `Joins slot ${j} · starts its own chain`; good = true; }
+    else if (test.links[j]) { hint = `Joins slot ${j} · links after ${prev}`; good = true; }
+    else hint = `Joins slot ${j} · no link after ${prev} — rearrange`;
+  } else {
+    hint = "Trail full · replaces a slot";
+  }
+  c.innerHTML = `<span class="key">${idx + 1}</span>${card.kind === "rank" ? `<span class="badge">RANK UP</span>` : owned ? "" : `<span class="badge">NEW</span>`}
+    <div class="glyph">${techIcon(card.tech)}</div>
+    <div class="meta">${t.family} · ${String(t.num).padStart(2, "0")} ${card.kind === "rank" ? pips(owned?.rank ?? 1, true) : ""}</div>
+    <div class="name">${t.name}</div>
+    <div class="flow">${ioIcons(card.tech)}</div>
+    <div class="desc">${t.desc}</div>
+    <div class="r3"><b>Rank III</b> · ${t.rank3}</div>
+    <div class="hint ${good ? "good" : ""}"><i class="dot"></i>${hint}</div>`;
+  return c;
+}
+
+export function draftScreen(cards: DraftCard[], run: RunState, o: DraftOpts): Promise<number> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    if (o.banner) s.appendChild(frag(`<div class="reward-banner">${o.banner}</div>`));
+    s.appendChild(frag(`<div class="kicker">${o.kicker ?? "Choose one"}</div>`));
+    s.appendChild(frag(`<div class="h1">${o.title}</div>`));
+    if (o.sub) s.appendChild(frag(`<div class="sub">${o.sub}</div>`));
+    const wrap = el("div", "cards");
+    let done = false;
+    const els = cards.map((c, i) => {
+      const ce = cardEl(c, run, i);
+      ce.tabIndex = 0;
+      if (i === 0) ce.dataset.autofocus = "";
+      ce.addEventListener("pointerenter", () => audio.ui("tick"));
+      ce.addEventListener("click", () => pick(i));
+      ce.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(i); } });
+      wrap.appendChild(ce);
+      return ce;
+    });
+    s.appendChild(wrap);
+    if (run.trail.length) {
+      const st = buildStrip(run.trail, { form: run.form, slots: run.slots });
+      st.el.style.transform = "scale(0.82)";
+      st.el.style.opacity = "0.8";
+      s.appendChild(st.el);
+    }
+    function pick(i: number) {
+      if (done) return;
+      done = true;
+      pop();
+      audio.ui("card");
+      audio.ui("confirm");
+      els.forEach((e, k) => e.classList.add(k === i ? "picked" : "gone"));
+      window.setTimeout(() => resolve(i), 380);
+    }
+    const pop = keys((e) => {
+      const n = Number(e.key);
+      if (n >= 1 && n <= cards.length) pick(n - 1);
+    });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Place pending echo
+export function placeScreen(run: RunState): Promise<number> {
+  return new Promise((resolve) => {
+    const t = TECH[run.pendingEcho!]!;
+    const s = el("div", "scr dim");
+    s.innerHTML = `<div class="kicker">Trail full</div><div class="h1">Make room for ${t.name}</div><div class="sub">Choose an echo to replace, or let it go.</div>`;
+    const st = buildStrip(run.trail, { form: run.form });
+    st.tiles.slice(1).forEach((tile, i) => {
+      tile.classList.add("target");
+      tile.tabIndex = 0;
+      tile.addEventListener("click", () => { audio.ui("confirm"); pop(); resolve(i); });
+    });
+    const incoming = el("div", `tile ${famClass(run.pendingEcho!)}`);
+    incoming.style.margin = "10px auto";
+    incoming.innerHTML = tileHtml({ tech: run.pendingEcho!, rank: 1 }, 0).replace('<span class="slotno">0</span>', '<span class="slotno">NEW</span>');
+    s.appendChild(incoming);
+    s.appendChild(st.el);
+    const b = btn("Discard", "btn ghost", () => { pop(); resolve(-1); }, "back");
+    s.appendChild(b);
+    const pop = keys((e) => { if (e.key === "Escape") { pop(); resolve(-1); } });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Arrange
+export function arrangeScreen(run: RunState, opts: { cta?: string } = {}): Promise<void> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim arrange");
+    s.innerHTML = `<div class="kicker">Formation</div><div class="h1">The Order Is the Build</div><div class="sub">Drag to reorder. Each echo only hears the one directly ahead of it.</div>`;
+    const holder = el("div");
+    const meta = el("div", "trail-meta");
+    s.append(holder, meta);
+    let sel = -1;
+    const render = () => {
+      holder.innerHTML = "";
+      const st = buildStrip(run.trail, { form: run.form, slots: run.slots });
+      holder.appendChild(st.el);
+      const info = analyzeTrail(run.trail, run.form);
+      meta.innerHTML = `<span>Longest chain <b>×${info.longest}</b></span><span>Links <b>${info.count}/${run.trail.length}</b></span><span>Slots <b>${run.trail.length}/${run.slots}</b></span>`;
+      st.tiles.slice(1, run.trail.length + 1).forEach((tile, i) => {
+        tile.tabIndex = 0;
+        if (i === sel) tile.classList.add("sel");
+        tile.addEventListener("pointerdown", (e) => startDrag(e, tile, i, st.tiles.slice(1, run.trail.length + 1)));
+        tile.addEventListener("keydown", (e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); move(i, e.key === "ArrowLeft" ? -1 : 1); }
+        });
+      });
+    };
+    const move = (i: number, d: number) => {
+      const j = i + d;
+      if (j < 0 || j >= run.trail.length) return;
+      const order = run.trail.map((x) => x.tech);
+      [order[i], order[j]] = [order[j]!, order[i]!];
+      arrange(run, order);
+      sel = j;
+      audio.ui("drop");
+      render();
+      (holder.querySelectorAll<HTMLElement>(".tile")[j + 1])?.focus();
+    };
+    const startDrag = (e: PointerEvent, tile: HTMLElement, i: number, all: HTMLElement[]) => {
+      e.preventDefault();
+      const r = tile.getBoundingClientRect();
+      const ghost = tile.cloneNode(true) as HTMLElement;
+      ghost.classList.add("ghost");
+      ghost.style.width = `${r.width}px`;
+      ghost.style.left = `${r.left}px`;
+      ghost.style.top = `${r.top}px`;
+      document.body.appendChild(ghost);
+      tile.classList.add("drag");
+      const ox = e.clientX - r.left, oy = e.clientY - r.top;
+      let moved = false;
+      let target = i;
+      const centers = all.map((t) => { const b = t.getBoundingClientRect(); return b.left + b.width / 2; });
+      const onMove = (ev: PointerEvent) => {
+        moved = moved || Math.abs(ev.clientX - e.clientX) > 4;
+        ghost.style.left = `${ev.clientX - ox}px`;
+        ghost.style.top = `${ev.clientY - oy}px`;
+        let best = 0, bd = 1e9;
+        centers.forEach((c, k) => { const d = Math.abs(c - ev.clientX); if (d < bd) { bd = d; best = k; } });
+        if (best !== target) { target = best; audio.ui("tick"); }
+        all.forEach((t, k) => t.classList.toggle("sel", k === target && k !== i));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        ghost.remove();
+        if (!moved) {
+          // tap-to-swap
+          if (sel >= 0 && sel !== i) {
+            const order = run.trail.map((x) => x.tech);
+            [order[sel], order[i]] = [order[i]!, order[sel]!];
+            arrange(run, order);
+            audio.ui("drop");
+            sel = -1;
+          } else sel = sel === i ? -1 : i;
+          render();
+          return;
+        }
+        if (target !== i) {
+          const order = run.trail.map((x) => x.tech);
+          const [m] = order.splice(i, 1);
+          order.splice(target, 0, m!);
+          arrange(run, order);
+          audio.ui("drop");
+        }
+        sel = -1;
+        render();
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    };
+    render();
+    const row = el("div", "row");
+    row.style.marginTop = "14px";
+    const auto = btn(`${UI_ICON.auto.replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;margin-right:8px"')}Auto-arrange`, "btn", () => {
+      arrange(run, bestOrder(run.trail, run.form).map((x) => x.tech));
+      render();
+    }, "tick");
+    const go = btn(`${opts.cta ?? "March On"}<span class="k">ENTER</span>`, "btn primary", () => { pop(); resolve(); });
+    go.dataset.autofocus = "";
+    row.append(auto, go);
+    s.appendChild(row);
+    const pop = keys((e) => {
+      if (e.key === "Enter" && !(document.activeElement as HTMLElement)?.classList.contains("tile")) { audio.ui("confirm"); pop(); resolve(); }
+      if (e.key.toLowerCase() === "a") { arrange(run, bestOrder(run.trail, run.form).map((x) => x.tech)); render(); }
+    });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Map
+const FAMILY_INFO: Record<string, [string, string]> = {
+  husk: ["Husks", "Slow swarms. Area echoes like Bell and Shockline shine."],
+  bulwark: ["Bulwarks", "Front shields block until Broken, launched, or staggered."],
+  lancer: ["Lancers", "Ranged throws. Guard Ghost reads every one."],
+  splitter: ["Splitters", "Split in two on death. Feed your kill chains."],
+  mimic: ["Mimics", "Copy your most-used echo for 5s. Diversify."],
+  mixed: ["Mixed Company", "A little of everything."],
+};
+
+export function nodeInfo(n: MapNode): [string, string] {
+  if (n.type === "forge") return ["Forge", "Rank up one echo."];
+  if (n.type === "rest") return ["Rest", "Heal 40% of your HP, or take a Seal."];
+  if (n.type === "elite") return ["Elite · Twin Lancer", "Two hasted throwers behind a wall of husks."];
+  if (n.type === "boss") {
+    const b = n.plan?.boss === "original" ? "original" : "duplicate";
+    return b === "duplicate"
+      ? [BOSSES.duplicate.name, "Marches a copy of your own trail at you — in reverse."]
+      : [BOSSES.original.name, "A perfect fighter. Only chains of 3+ links break its guard."];
+  }
+  return FAMILY_INFO[n.family ?? "mixed"] ?? FAMILY_INFO.mixed!;
+}
+
+export type MapAction = { pick: number } | { formation: true } | { menu: true };
+
+export function mapScreen(run: RunState): Promise<MapAction> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim map-scr");
+    const endless = run.mode === "endless";
+    const theme = THEMES[Math.min(2, (endless ? Math.min(3, 1 + Math.floor(run.endlessDepth / 5)) : run.act) - 1)]!;
+    s.innerHTML = `<div class="kicker">${endless ? `Endless Road · Depth ${run.endlessDepth + 1}` : `Act ${ROMAN[run.act]}`}</div><div class="h1">${endless ? "The Road Without End" : theme.name}</div>`;
+    const stat = el("div", "statbar");
+    stat.innerHTML = `<span class="chip">${UI_ICON.heart.replace("<svg", '<svg style="width:12px;height:12px"')} ${Math.ceil(run.hp)} / ${run.maxHp}</span><div class="hpbar"><i style="width:${(run.hp / run.maxHp) * 100}%"></i></div>${run.seals.map((id) => `<span class="chip" title="${SEAL[id]?.desc ?? ""}">${SEAL[id]?.glyph ?? ""} ${SEAL[id]?.name ?? id}</span>`).join("")}${run.ascension ? `<span class="chip">Ascension ${run.ascension}</span>` : ""}`;
+    s.appendChild(stat);
+    const road = el("div", "road");
+    const steps = endless ? run.acts[0]!.slice(Math.max(0, run.step - 2), run.step + 1) : run.acts[run.act - 1]!;
+    const offset = endless ? Math.max(0, run.step - 2) : 0;
+    const info = el("div", "node-info");
+    const nowNodes: HTMLElement[] = [];
+    steps.forEach((st, si) => {
+      const idx = si + offset;
+      if (si > 0) road.appendChild(el("div", `seg ${idx <= run.step ? "done" : ""}`));
+      const col = el("div", "step");
+      st.options.forEach((n, oi) => {
+        const state = idx < run.step ? "done" : idx === run.step ? "now" : "future";
+        const ne = el("button", `node ${state} ${n.type} ${idx < run.step && st.chosen === oi ? "chosen" : ""}`);
+        ne.innerHTML = `${nodeIcon(n.type)}<span class="lbl">${n.type === "fight" ? (FAMILY_INFO[n.family ?? "mixed"]?.[0] ?? "Fight") : n.type === "boss" ? "Boss" : n.type}</span>`;
+        if (state === "now") {
+          nowNodes.push(ne);
+          ne.addEventListener("pointerenter", () => { audio.ui("tick"); showInfo(n); });
+          ne.addEventListener("focus", () => showInfo(n));
+          ne.addEventListener("click", () => { audio.ui("confirm"); pop(); resolve({ pick: oi }); });
+        } else ne.tabIndex = -1;
+        col.appendChild(ne);
+      });
+      road.appendChild(col);
+    });
+    s.appendChild(road);
+    s.appendChild(info);
+    const showInfo = (n: MapNode) => {
+      const [a, b] = nodeInfo(n);
+      info.innerHTML = `<b>${a}</b>${b}`;
+    };
+    const cur = currentStep(run);
+    showInfo(cur.options[0]!);
+    if (nowNodes[0]) nowNodes[0].dataset.autofocus = "";
+    const st = buildStrip(run.trail, { form: run.form, slots: run.slots });
+    st.el.style.transform = "scale(0.86)";
+    s.appendChild(st.el);
+    const row = el("div", "row");
+    row.append(
+      btn("Formation <span class='k'>F</span>", "btn", () => { pop(); resolve({ formation: true }); }, "tick"),
+      btn("Menu <span class='k'>ESC</span>", "btn ghost", () => { pop(); resolve({ menu: true }); }, "tick"),
+    );
+    s.appendChild(row);
+    const pop = keys((e) => {
+      if (e.key === "Escape") { pop(); resolve({ menu: true }); }
+      if (e.key.toLowerCase() === "f") { pop(); resolve({ formation: true }); }
+      if (e.key === "1" || e.key === "2") {
+        const i = Number(e.key) - 1;
+        if (i < cur.options.length) { audio.ui("confirm"); pop(); resolve({ pick: i }); }
+      }
+      if (e.key === "Enter" && cur.options.length === 1) { audio.ui("confirm"); pop(); resolve({ pick: 0 }); }
+    });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Forge / Rest
+export function forgeScreen(run: RunState): Promise<number> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    s.innerHTML = `<div class="kicker">Forge</div><div class="h1">Temper One Echo</div><div class="sub">Rank II is +50% output. Rank III doubles it and unlocks a unique bonus.</div>`;
+    const st = buildStrip(run.trail, { form: run.form });
+    let any = false;
+    st.tiles.slice(1).forEach((tile, i) => {
+      const slot = run.trail[i]!;
+      if (slot.rank >= 3) { tile.style.opacity = "0.4"; return; }
+      any = true;
+      tile.classList.add("target");
+      tile.tabIndex = 0;
+      tile.title = `Rank ${ROMAN[slot.rank + 1]}${slot.rank + 1 === 3 ? ` — ${TECH[slot.tech]!.rank3}` : ""}`;
+      tile.addEventListener("click", () => { audio.ui("unlock"); pop(); resolve(i); });
+    });
+    s.appendChild(st.el);
+    if (!any) s.appendChild(btn("Every echo is mastered — move on", "btn", () => { pop(); resolve(-1); }));
+    const pop = keys((e) => { if (e.key === "Escape" && !any) { pop(); resolve(-1); } });
+    mount(s);
+  });
+}
+
+export function restScreen(run: RunState): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    s.innerHTML = `<div class="kicker">Rest</div><div class="h1">A Quiet Fire</div><div class="sub">${Math.ceil(run.hp)} / ${run.maxHp} HP</div>`;
+    const c = el("div", "choice2");
+    const heal = el("button", "bigchoice");
+    heal.innerHTML = `${UI_ICON.heart.replace("<svg", '<svg style="color:var(--bone)"')}<div class="bc1">Heal</div><div class="bc2">Restore ${Math.round(run.maxHp * 0.4)} HP</div>`;
+    const seal = el("button", "bigchoice");
+    seal.innerHTML = `<div style="font-family:var(--display);font-size:40px">◎</div><div class="bc1">Take a Seal</div><div class="bc2">Choose one of three run passives</div>`;
+    heal.dataset.autofocus = "";
+    heal.addEventListener("click", () => { audio.ui("confirm"); pop(); resolve(true); });
+    seal.addEventListener("click", () => { audio.ui("confirm"); pop(); resolve(false); });
+    c.append(heal, seal);
+    s.appendChild(c);
+    const pop = keys((e) => { if (e.key === "1") { pop(); resolve(true); } if (e.key === "2") { pop(); resolve(false); } });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Pause
+export function pauseScreen(): Promise<"resume" | "settings" | "abandon"> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    s.innerHTML = `<div class="kicker">Paused</div><div class="h1">Hold the Line</div><div class="spacer"></div>`;
+    const m = el("div", "menu");
+    const r = btn("Resume <span class='k'>ESC</span>", "btn primary", () => { pop(); resolve("resume"); });
+    r.dataset.autofocus = "";
+    m.append(r, btn("Settings", "btn", () => { pop(); resolve("settings"); }), btn("Save &amp; Quit", "btn ghost", () => { pop(); resolve("abandon"); }, "back"));
+    s.appendChild(m);
+    const pop = keys((e) => { if (e.key === "Escape" || e.key.toLowerCase() === "p") { pop(); resolve("resume"); } });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Results
+export function resultsScreen(run: RunState, won: boolean, unlocks: Unlocks, codexNew: CodexEntry[]): Promise<"again" | "title"> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    const p = el("div", "panel results");
+    const endless = run.mode === "endless";
+    const title = endless ? `Depth ${run.endlessDepth}` : won ? "The Original Falls" : "The Line Breaks";
+    const kick = endless ? "The road ends here" : won ? "Victory" : `Fallen in Act ${ROMAN[Math.min(3, run.act)]}`;
+    const st = run.stats;
+    const mins = Math.floor(st.timeMs / 60000), secs = Math.floor((st.timeMs % 60000) / 1000);
+    p.innerHTML = `<div class="kicker" style="text-align:center">${kick}</div><div class="h1">${title}</div>
+      <div class="grid">
+        <div class="stat"><div class="v">×${st.longestChain}</div><div class="l">Longest chain</div></div>
+        <div class="stat"><div class="v">${st.fightsWon}</div><div class="l">Fights won</div></div>
+        <div class="stat"><div class="v">${st.kills}</div><div class="l">Kills</div></div>
+        <div class="stat"><div class="v">${st.parries}</div><div class="l">Parries</div></div>
+        <div class="stat"><div class="v">${st.crits}</div><div class="l">Crits</div></div>
+        <div class="stat"><div class="v">${mins}:${String(secs).padStart(2, "0")}</div><div class="l">Battle time</div></div>
+      </div>`;
+    const dmg = Object.entries(st.techDamage).filter(([k]) => TECH[k]).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (dmg.length) {
+      p.appendChild(frag(`<div class="sect">Damage by echo</div>`));
+      const max = dmg[0]![1];
+      for (const [k, v] of dmg) {
+        p.appendChild(frag(`<div class="dmgrow ${famClass(k)}"><div class="g">${techIcon(k)}</div><div>${TECH[k]!.name}</div><div><div class="b" style="width:${(v / max) * 100}%"></div></div><div class="n">${Math.round(v).toLocaleString()}</div></div>`));
+      }
+    }
+    if (unlocks.techs.length || unlocks.forms.length || unlocks.endless || unlocks.ascension) {
+      p.appendChild(frag(`<div class="sect">Unlocked</div>`));
+      const ug = el("div", "unlocks");
+      p.appendChild(ug);
+      const add = (h: string) => ug.appendChild(frag(h));
+      for (const t of unlocks.techs) add(`<div class="unlock ${famClass(t)}"><div class="g">${techIcon(t)}</div><div><b>${TECH[t]!.name}</b><br><span>${TECH[t]!.desc}</span></div></div>`);
+      for (const f of unlocks.forms) add(`<div class="unlock"><div class="g">◆</div><div><b>Form · ${FORMS[f].name}</b><br><span>${FORMS[f].desc}</span></div></div>`);
+      if (unlocks.endless) add(`<div class="unlock"><div class="g">∞</div><div><b>Endless Road</b><br><span>March until the line breaks.</span></div></div>`);
+      if (unlocks.ascension) add(`<div class="unlock"><div class="g">▲</div><div><b>Ascension ${unlocks.ascension}</b><br><span>${ASCENSIONS[unlocks.ascension - 1]?.desc ?? ""}</span></div></div>`);
+      window.setTimeout(() => audio.ui("unlock"), 500);
+    }
+    if (codexNew.length) {
+      p.appendChild(frag(`<div class="sect">New chains in the Codex</div>`));
+      for (const c of codexNew.slice(0, 4)) p.appendChild(chainRow(c));
+    }
+    p.appendChild(frag(`<div class="sub" style="margin:14px auto 0;font-size:13px">Seed ${run.seed} · ${FORMS[run.form].name}${run.ascension ? ` · Ascension ${run.ascension}` : ""}</div>`));
+    const row = el("div", "row");
+    row.style.marginTop = "16px";
+    const again = btn("March Again", "btn primary", () => { pop(); resolve("again"); });
+    again.dataset.autofocus = "";
+    row.append(btn("Title", "btn ghost", () => { pop(); resolve("title"); }, "back"), again);
+    p.appendChild(row);
+    s.appendChild(p);
+    const pop = keys((e) => { if (e.key === "Enter") { pop(); resolve("again"); } });
+    mount(s);
+  });
+}
+
+function chainRow(c: CodexEntry): HTMLElement {
+  const r = el("div", "chainrow");
+  r.innerHTML = `<div class="cg fam-ink" style="color:var(--bone)">${evIcon("HIT")}</div>` + c.path.map((t) => `<span class="ca">›</span><div class="cg ${famClass(t)}" title="${TECH[t]?.name ?? t}">${techIcon(t)}</div>`).join("") + `<span class="cn">×${c.links}${c.count > 1 ? ` · seen ${c.count}` : ""}</span>`;
+  return r;
+}
+
+// ───────────────────────── Codex
+export function codexScreen(p: Profile): Promise<void> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    const box = el("div", "panel codex");
+    box.innerHTML = `<div class="kicker" style="text-align:center">Codex</div><div class="h1">Every Line Remembered</div>`;
+    const tabs = el("div", "tabs seg-ctl");
+    tabs.style.alignSelf = "center";
+    tabs.innerHTML = `<button data-t="chains" class="on">Chains</button><button data-t="techs">Techniques</button>`;
+    const body = el("div", "body");
+    box.append(tabs, body);
+    const show = (t: string) => {
+      tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+      body.innerHTML = "";
+      if (t === "chains") {
+        if (!p.codex.length) body.appendChild(frag(`<div class="sub" style="margin:30px auto">Chains of 4+ links are written here. Build one.</div>`));
+        for (const c of p.codex.slice(0, 80)) body.appendChild(chainRow(c));
+      } else {
+        const g = el("div", "techgrid");
+        for (const t of TECHNIQUES) {
+          const locked = !p.techs.includes(t.id);
+          const goal = goalFor(t.id);
+          g.appendChild(frag(`<div class="techcell ${famClass(t.id)} ${locked ? "locked" : ""}"><div class="g">${techIcon(t.id)}</div><div><b>${t.name}</b><p>${locked ? `${UI_ICON.lock.replace("<svg", '<svg style="width:11px;height:11px;vertical-align:-1px"')} ${goal?.text ?? "Locked"}` : t.desc}</p><div class="io">${ioIcons(t.id)}</div></div></div>`));
+        }
+        body.appendChild(g);
+      }
+    };
+    tabs.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.addEventListener("click", () => { audio.ui("tick"); show(b.dataset.t!); }));
+    show("chains");
+    const row = el("div", "row");
+    row.style.marginTop = "14px";
+    const back = btn("Back <span class='k'>ESC</span>", "btn", () => { pop(); resolve(); }, "back");
+    back.dataset.autofocus = "";
+    row.appendChild(back);
+    box.appendChild(row);
+    s.appendChild(box);
+    const pop = keys((e) => { if (e.key === "Escape") { pop(); resolve(); } });
+    mount(s);
+  });
+}
+
+// ───────────────────────── Settings
+export function settingsScreen(p: Profile, onChange: () => void): Promise<void> {
+  return new Promise((resolve) => {
+    const s = el("div", "scr dim");
+    const box = el("div", "panel settings");
+    box.innerHTML = `<div class="kicker" style="text-align:center">Settings</div><div class="h1">Tuning</div>`;
+    const st = p.settings;
+    const slider = (label: string, key: "master" | "music" | "sfx") => {
+      const r = el("div", "setrow");
+      r.innerHTML = `<label>${label}</label><input type="range" min="0" max="1" step="0.05" value="${st[key]}">`;
+      r.querySelector("input")!.addEventListener("input", (e) => { st[key] = Number((e.target as HTMLInputElement).value); onChange(); });
+      r.querySelector("input")!.addEventListener("change", () => audio.ui("tick"));
+      return r;
+    };
+    const toggle = (label: string, key: "reducedFlash" | "reducedShake" | "numbers") => {
+      const r = el("div", "setrow");
+      r.innerHTML = `<label>${label}</label><button class="toggle ${st[key] ? "on" : ""}" aria-pressed="${st[key]}"></button>`;
+      const t = r.querySelector("button")!;
+      t.addEventListener("click", () => { st[key] = !st[key]; t.classList.toggle("on", st[key]); audio.ui("tick"); onChange(); });
+      return r;
+    };
+    const speed = el("div", "setrow");
+    speed.innerHTML = `<label>Default battle speed</label><div class="seg-ctl"><button data-s="1">1×</button><button data-s="2">2×</button></div>`;
+    const syncSp = () => speed.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.s) === st.speed));
+    speed.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.addEventListener("click", () => { st.speed = Number(b.dataset.s) as 1 | 2; syncSp(); audio.ui("tick"); onChange(); }));
+    syncSp();
+    box.append(slider("Master volume", "master"), slider("Music", "music"), slider("Effects", "sfx"), speed, toggle("Damage numbers", "numbers"), toggle("Reduce flashing", "reducedFlash"), toggle("Reduce screen shake", "reducedShake"));
+    const keysHelp = frag(`<div class="sub" style="font-size:13px;margin:16px auto 0;text-align:left;line-height:1.7">SPACE / tap portrait — Sync Break · TAB — speed · ESC — pause · F — formation (map) · 1-3 — pick cards</div>`);
+    box.appendChild(keysHelp);
+    const row = el("div", "row");
+    row.style.marginTop = "16px";
+    const back = btn("Done <span class='k'>ESC</span>", "btn primary", () => { pop(); resolve(); });
+    back.dataset.autofocus = "";
+    row.appendChild(back);
+    box.appendChild(row);
+    s.appendChild(box);
+    const pop = keys((e) => { if (e.key === "Escape") { pop(); resolve(); } });
+    mount(s);
+  });
+}
+
+export { type TrailSlot };

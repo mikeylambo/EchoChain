@@ -8,7 +8,6 @@ import { ELITE_TRAITS, initBoss, killAllSilently, updateEnemies, type BossRuntim
 import { streamFor, type DeterministicRng } from "./rng";
 import { slotDelayTicks, slotSpacing, TrailHistory } from "./trail";
 import type { ChainEvent, Enemy, EnemyKind, EventLogEntry, FireZone, Fx, Pose, Projectile } from "./types";
-import type { RelicId } from "../data/relics";
 
 export interface FightConfig {
   seed: string | number;
@@ -23,8 +22,6 @@ export interface FightConfig {
   endlessScale?: number;
   sandbox?: boolean;
   startCharge?: number;
-  relics?: RelicId[];
-  dailyMutator?: string;
 }
 
 export interface Fighter {
@@ -113,7 +110,7 @@ export class World {
       x: 0, hp: cfg.hp, maxHp: cfg.maxHp, pose: "walk", poseT: 0, strikeT: 0.3,
       guaranteedCrits: 0, overdrive: 0, overdriveCap: 0.4, overdriveT: 0, hurtT: 0,
     };
-    this.charge = cfg.startCharge ?? (cfg.relics?.includes("kinetic_battery") ? TUNING.syncChargeMax * 0.5 : 0);
+    this.charge = cfg.startCharge ?? 0;
     this.history.reset(0);
     this.chain = new ChainEngine(this);
     this.chain.setTrail(cfg.trail);
@@ -122,7 +119,7 @@ export class World {
   }
 
   get baseDamage(): number {
-    return this.form.dmg * this.mods.damageMult;
+    return this.form.dmg;
   }
 
   get chargeFull(): boolean {

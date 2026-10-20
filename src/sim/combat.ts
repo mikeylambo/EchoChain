@@ -66,12 +66,7 @@ export function applyDamage(w: World, src: DamageSource, e: Enemy, dmg: number, 
   e.hp -= dmg;
   e.flashT = 0.12;
   w.stats.techDamage[src.tech] = (w.stats.techDamage[src.tech] ?? 0) + dmg;
-  if (crit) {
-    w.stats.crits++;
-    if (w.cfg.relics?.includes("void_needle")) {
-      e.breakStacks = (e.breakStacks ?? 0) + 2;
-    }
-  }
+  if (crit) w.stats.crits++;
   w.fx.push({ k: "hit", x: e.x, z: e.z, lane: e.lane, dmg, crit, family: src.family, blocked });
   if (w.mods.afterglow > 0 && src.slot >= 1 && src.tech !== "afterglow") {
     w.delayed.push({ at: w.nowMs + 500, enemyId: e.id, dmg: dmg * w.mods.afterglow, src: { ...src, tech: "afterglow" } });
@@ -126,16 +121,9 @@ export function enemyAttack(w: World, attacker: Enemy, dmg: number): void {
   if (intercepted) {
     w.stats.parries++;
     w.fx.push({ k: "parry", x: w.fighter.x + 18 });
-    if (w.cfg.relics?.includes("chrono_shard")) {
-      applyDamage(w, { slot: 0, chainId: -1, tech: "chrono_shard", family: "precision", links: 1, sync: false }, attacker, 25, true);
-    }
     return;
   }
-  let finalDmg = dmg;
-  if (w.cfg.relics?.includes("iron_pact") && w.fighter.hp < w.fighter.maxHp * 0.4) {
-    finalDmg = Math.max(1, Math.round(finalDmg * 0.75));
-  }
-  damageFighter(w, finalDmg);
+  damageFighter(w, dmg);
 }
 
 export function launch(e: Enemy): void {

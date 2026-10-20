@@ -10,7 +10,6 @@ export interface RunMods {
   chargeMult: number;
   afterglow: number;
   chainTax: number;
-  damageMult: number;
 }
 
 export const BASE_MODS: RunMods = {
@@ -24,7 +23,6 @@ export const BASE_MODS: RunMods = {
   chargeMult: 1,
   afterglow: 0,
   chainTax: 0,
-  damageMult: 1,
 };
 
 export interface SealDef {
@@ -67,7 +65,6 @@ export function aggregateMods(sealIds: readonly string[]): RunMods {
     if (d.chargeMult) m.chargeMult *= d.chargeMult;
     if (d.afterglow) m.afterglow += d.afterglow;
     if (d.chainTax) m.chainTax += d.chainTax;
-    if (d.damageMult) m.damageMult *= d.damageMult;
   }
   return m;
 }
