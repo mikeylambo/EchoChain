@@ -174,6 +174,9 @@ export function rigFor(pose: ExtraPose, t: number, walkRate = 1.25): Rig {
   }
 }
 
+export type Outfit = "coat" | "cloak" | "scarf" | "none";
+export type Prop = "katana" | "gauntlet" | "daggers" | "shield" | "rapier" | "greatblade" | "spear" | "halo" | "bell" | "orb" | "sickle" | "twin" | "lantern" | "fan";
+
 export interface FigureLook {
   form: FormId | "original" | "duplicate";
   /** time for secondary motion (scarf) */
@@ -182,6 +185,10 @@ export interface FigureLook {
   speed?: number;
   smearColor?: string;
   noScarf?: boolean;
+  /** hero attire: long coat, tattered cloak, or the original scarf */
+  outfit?: Outfit;
+  /** per-echo identity prop (replaces the form weapon) */
+  prop?: Prop;
 }
 
 const UP = 19, LOW = 18, THIGH = 20, SHIN = 19, TORSO = 30;
@@ -237,11 +244,15 @@ export function drawSilhouette(ctx: CanvasRenderingContext2D, r: Rig, look: Figu
     return [wx, wy, fa];
   };
   const [bwx, bwy] = arm(r.aBu, r.aBl, bulk * 0.92);
-  if (form === "brawler") circle(ctx, bwx, bwy, 5.2);
-  if (form === "phantom") blade(ctx, bwx, bwy, r.weaponB, 15, 2.6);
+  const backProp = look.prop ?? (form === "brawler" ? "gauntlet" : form === "phantom" ? "daggers" : "katana");
+  if (backProp === "gauntlet") gauntlet(ctx, bwx, bwy, 0.85);
+  if (backProp === "daggers" || backProp === "twin") blade(ctx, bwx, bwy, r.weaponB, backProp === "twin" ? 30 : 15, 2.6);
 
   // scarf / cloak (behind torso)
-  if (!look.noScarf) scarf(ctx, nx, ny, look, form);
+  const outfit = look.noScarf ? "none" : look.outfit ?? "scarf";
+  if (outfit === "coat") coat(ctx, nx, ny, hipY, r, look, bulk);
+  else if (outfit === "cloak") cloak(ctx, nx, ny, hipY, r, look, bulk);
+  else if (outfit === "scarf") scarf(ctx, nx, ny, look, form);
 
   // torso
   const hw = 6.2 * bulk, sw = 8.6 * bulk;
@@ -286,17 +297,8 @@ export function drawSilhouette(ctx: CanvasRenderingContext2D, r: Rig, look: Figu
 
   // front arm + weapon
   const [wx, wy] = arm(r.aFu, r.aFl, bulk);
-  if (form === "brawler") {
-    circle(ctx, wx, wy, 6.4);
-  } else if (form === "phantom") {
-    blade(ctx, wx, wy, r.weapon, 17, 2.8);
-  } else {
-    blade(ctx, wx, wy, r.weapon, form === "original" ? 50 : 44, 3.1);
-    // tsuba
-    ctx.lineWidth = 3;
-    const gx = Math.cos(r.weapon + Math.PI / 2) * 4, gy = Math.sin(r.weapon + Math.PI / 2) * 4;
-    line(ctx, wx - gx, wy - gy, wx + gx, wy + gy);
-  }
+  const prop: Prop = look.prop ?? (form === "brawler" ? "gauntlet" : form === "phantom" ? "daggers" : "katana");
+  drawProp(ctx, prop, wx, wy, r.weapon, bwx, bwy, hdx, hdy, form === "original" ? 50 : 44, look.time);
 
   // slash smear
   if (r.smear > 0.02 && look.smearColor) {
@@ -314,6 +316,132 @@ export function drawSilhouette(ctx: CanvasRenderingContext2D, r: Rig, look: Figu
     }
     ctx.restore();
   }
+}
+
+function gauntlet(ctx: CanvasRenderingContext2D, x: number, y: number, k = 1): void {
+  ctx.beginPath();
+  ctx.moveTo(x - 6 * k, y - 7 * k);
+  ctx.lineTo(x + 7 * k, y - 6 * k);
+  ctx.lineTo(x + 9 * k, y + 5 * k);
+  ctx.lineTo(x - 5 * k, y + 8 * k);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = 3 * k;
+  line(ctx, x - 9 * k, y - 10 * k, x - 3 * k, y - 4 * k);
+}
+
+function drawProp(ctx: CanvasRenderingContext2D, p: Prop, wx: number, wy: number, a: number, bx: number, by: number, hx: number, hy: number, len: number, t: number): void {
+  const tsuba = () => {
+    ctx.lineWidth = 3;
+    const gx = Math.cos(a + Math.PI / 2) * 4, gy = Math.sin(a + Math.PI / 2) * 4;
+    line(ctx, wx - gx, wy - gy, wx + gx, wy + gy);
+  };
+  switch (p) {
+    case "gauntlet": gauntlet(ctx, wx, wy, 1.15); break;
+    case "daggers": blade(ctx, wx, wy, a, 17, 2.8); break;
+    case "twin": blade(ctx, wx, wy, a, 32, 2.6); tsuba(); break;
+    case "rapier": blade(ctx, wx, wy, a, 54, 1.4); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(wx, wy, 5, 0, Math.PI * 2); ctx.stroke(); break;
+    case "greatblade": blade(ctx, wx, wy, a, 58, 7.5); tsuba(); break;
+    case "spear": {
+      const dx = Math.cos(a), dy = Math.sin(a);
+      ctx.lineWidth = 2.6;
+      line(ctx, wx - dx * 26, wy - dy * 26, wx + dx * 52, wy + dy * 52);
+      blade(ctx, wx + dx * 48, wy + dy * 48, a, 14, 5);
+      break;
+    }
+    case "shield": {
+      blade(ctx, wx, wy, a, 30, 2.8);
+      ctx.save();
+      ctx.translate(bx + 6, by - 4);
+      ctx.beginPath();
+      ctx.moveTo(-2, -14); ctx.lineTo(12, -12); ctx.lineTo(12, 6); ctx.quadraticCurveTo(6, 16, -2, 18); ctx.quadraticCurveTo(-8, 8, -8, -10);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+      break;
+    }
+    case "halo": {
+      blade(ctx, wx, wy, a, len, 3.1); tsuba();
+      ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.ellipse(hx - 2, hy - 15, 11, 3.4, -0.15, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case "bell": {
+      ctx.lineWidth = 1.4; line(ctx, wx, wy, wx + 2, wy + 10);
+      ctx.beginPath(); ctx.moveTo(wx - 6, wy + 22); ctx.quadraticCurveTo(wx - 5, wy + 9, wx + 2, wy + 9); ctx.quadraticCurveTo(wx + 9, wy + 9, wx + 10, wy + 22); ctx.closePath(); ctx.fill();
+      circle(ctx, wx + 2, wy + 24, 2);
+      break;
+    }
+    case "orb": circle(ctx, wx + Math.cos(a) * 8, wy + Math.sin(a) * 8, 7); break;
+    case "lantern": {
+      const sw = Math.sin(t * 4) * 4;
+      ctx.lineWidth = 1.2; line(ctx, wx, wy, wx + sw, wy + 14);
+      ctx.fillRect(wx + sw - 5, wy + 14, 10, 12);
+      break;
+    }
+    case "sickle": {
+      ctx.lineWidth = 2.4;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      line(ctx, wx - dx * 6, wy - dy * 6, wx + dx * 22, wy + dy * 22);
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(wx + dx * 22 - dy * 10, wy + dy * 22 + dx * 10, 12, a - 1.9, a + 0.6); ctx.stroke();
+      break;
+    }
+    case "fan": {
+      ctx.beginPath(); ctx.moveTo(wx, wy); ctx.arc(wx, wy, 22, a - 0.7, a + 0.7); ctx.closePath(); ctx.fill();
+      break;
+    }
+    default: blade(ctx, wx, wy, a, len, 3.1); tsuba();
+  }
+}
+
+/** Long coat: high collar, body panel, two tails that trail with speed. */
+function coat(ctx: CanvasRenderingContext2D, nx: number, ny: number, hipY: number, r: Rig, look: FigureLook, bulk: number): void {
+  const t = look.time;
+  const drag = Math.min(1.5, 0.3 + (look.speed ?? 0) / 70);
+  const lean = Math.sin(r.lean);
+  const w = 8 * bulk;
+  const wave = (k: number) => Math.sin(t * 6.5 - k) * (1.5 + drag * 2.5);
+  const hem = hipY + 30;
+  ctx.beginPath();
+  // collar
+  ctx.moveTo(nx + 3, ny - 2);
+  ctx.lineTo(nx - 4, ny - 12);
+  ctx.lineTo(nx - 9, ny + 2);
+  // back down to tail
+  ctx.quadraticCurveTo(-w - 6 - lean * 6, hipY - 6, -w - 10 - drag * 14 + wave(0), hem + wave(1) * 0.6);
+  ctx.lineTo(-w - 22 - drag * 22 + wave(1.5), hem + 6 - drag * 6 + wave(2));
+  ctx.lineTo(-w - 2 - drag * 6 + wave(2), hem - 2);
+  // split
+  ctx.lineTo(-2 - drag * 4, hipY + 12);
+  ctx.lineTo(4 - drag * 8 + wave(3) * 0.6, hem + 2);
+  ctx.lineTo(w + 2 - drag * 6, hem - 4);
+  ctx.lineTo(w + 1, hipY - 4);
+  ctx.lineTo(nx + 5, ny + 6);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Tattered cloak: from the shoulders, ragged hem streaming back. */
+function cloak(ctx: CanvasRenderingContext2D, nx: number, ny: number, hipY: number, r: Rig, look: FigureLook, bulk: number): void {
+  const t = look.time;
+  const drag = Math.min(1.6, 0.35 + (look.speed ?? 0) / 65);
+  const hem = hipY + 36;
+  ctx.beginPath();
+  ctx.moveTo(nx + 6, ny - 1);
+  ctx.quadraticCurveTo(nx - 2, ny - 9, nx - 12, ny - 1);
+  const n = 7;
+  const back = -14 * bulk - drag * 26;
+  ctx.quadraticCurveTo(back * 0.6, hipY - 10, back, hem - 10);
+  for (let k = 0; k <= n; k++) {
+    const u = k / n;
+    const x = back + (14 - back) * u + Math.sin(t * 7 - k * 1.3) * (2 + drag * 3) * (1 - u);
+    const y = hem - 10 + u * 6 + (k % 2 ? 9 + Math.sin(t * 5 + k) * 3 : 0) - drag * 4 * (1 - u);
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(10 * bulk, hipY);
+  ctx.lineTo(nx + 7, ny + 8);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function scarf(ctx: CanvasRenderingContext2D, nx: number, ny: number, look: FigureLook, form: FigureLook["form"]): void {
@@ -388,3 +516,18 @@ export function drawInkFigure(ctx: CanvasRenderingContext2D, r: Rig, look: Figur
   drawSilhouette(ctx, r, look);
   ctx.restore();
 }
+
+/** Head centre in rig space (for eyes / halos drawn outside the silhouette). */
+export function headOf(r: Rig): [number, number] {
+  const hipY = -(THIGH + SHIN) * 0.96 + r.bob + r.crouch;
+  const nx = Math.sin(r.lean) * TORSO, ny = hipY - Math.cos(r.lean) * TORSO;
+  return [nx + Math.sin(r.lean) * 9.5, ny - Math.cos(r.lean) * 9.5];
+}
+
+/** Each technique's echo carries its own prop: still him, a different version of him. */
+export const TECH_PROP: Record<string, Prop> = {
+  guard: "shield", read: "fan", needle: "rapier", pinpoint: "rapier", sunder: "greatblade", executioner: "greatblade", lastlight: "lantern",
+  riposte: "spear", launcher: "gauntlet", juggler: "twin", slam: "gauntlet", flurry: "twin", pursuit: "daggers", shockline: "gauntlet",
+  tempo: "halo", overdrive: "twin", mirror: "halo", amplifier: "bell", prism: "orb", inverse: "orb", doppel: "daggers", bell: "bell",
+  harvest: "sickle", burning: "lantern",
+};

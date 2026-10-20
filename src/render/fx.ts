@@ -38,7 +38,7 @@ export function drawGlow(ctx: CanvasRenderingContext2D, x: number, y: number, r:
   ctx.globalAlpha = prev;
 }
 
-type Kind = "spark" | "shard" | "dust" | "ring" | "slash" | "beam" | "num" | "wave" | "star" | "streak" | "flame" | "glint" | "text";
+type Kind = "mote" | "spark" | "shard" | "dust" | "ring" | "slash" | "beam" | "num" | "wave" | "star" | "streak" | "flame" | "glint" | "text";
 
 export interface Particle {
   k: Kind;
@@ -112,6 +112,11 @@ export class Fx {
       const x = p.x - camX;
       ctx.globalCompositeOperation = p.add ? "lighter" : "source-over";
       switch (p.k) {
+        case "mote": {
+          ctx.fillStyle = `rgba(${p.rgb},${a * 0.9})`;
+          ctx.fillRect(x, p.y, p.size, p.size);
+          break;
+        }
         case "spark": {
           ctx.strokeStyle = `rgba(${p.rgb},${a})`;
           ctx.lineWidth = p.size * (1 - k * 0.5);

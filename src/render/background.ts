@@ -1,202 +1,280 @@
-/** Parallax dusk scenes per act. Fully procedural, seamless tiles, no assets. */
+/**
+ * The threshold: procedural space settings. Each region has its own palette, sky feature and floor;
+ * every fight rolls a variant (seeded) so no two roads look identical. The sky brightens with the chain.
+ */
 
 export interface Theme {
   name: string;
-  sky: [string, string, string, string];
-  sun: { x: number; y: number; r: number; core: string; glow: string; ring?: boolean };
-  layers: { color: string; base: number; amp: number; par: number; freq: number[]; jag: number }[];
-  fog: string;
-  ground: [string, string];
-  road: string;
-  roadMark: string;
-  props: "torii" | "lantern" | "monolith";
+  base: string;
+  neb: string[];
+  horizon: string; // rgb
+  floorTint: string; // rgb
+  feature: "moon" | "aurora" | "ring";
   motes: "dust" | "ember" | "snow";
   moteColor: string;
-  propColor: string;
-  propGlow: string;
+  ridge: string;
+  ridgeRim: string;
 }
 
 export const THEMES: Theme[] = [
   {
-    name: "The Outskirts",
-    sky: ["#120c18", "#3b1a26", "#9a4433", "#f3a65c"],
-    sun: { x: 0.68, y: 0.6, r: 64, core: "#ffe0a0", glow: "rgba(255,170,90,0.55)" },
-    layers: [
-      { color: "#5a2a2e", base: 0.62, amp: 90, par: 0.04, freq: [1, 2, 5], jag: 0.25 },
-      { color: "#3a1b22", base: 0.68, amp: 70, par: 0.12, freq: [2, 3, 7], jag: 0.45 },
-      { color: "#22111a", base: 0.74, amp: 46, par: 0.3, freq: [3, 5, 11], jag: 0.3 },
-    ],
-    fog: "rgba(243,166,92,0.16)",
-    ground: ["#140b0f", "#07050a"],
-    road: "#1c1115",
-    roadMark: "rgba(239,233,220,0.06)",
-    props: "torii",
+    name: "The Threshold",
+    base: "#04030c",
+    neb: ["#3a1d8a", "#1b2a8f", "#6b2fa8", "#0d4a8a"],
+    horizon: "170,150,255",
+    floorTint: "120,100,220",
+    feature: "moon",
     motes: "dust",
-    moteColor: "255,214,160",
-    propColor: "#120a0f",
-    propGlow: "rgba(255,170,90,0.0)",
+    moteColor: "200,190,255",
+    ridge: "#07061a",
+    ridgeRim: "140,120,255",
   },
   {
-    name: "The Long Road",
-    sky: ["#07071a", "#1d1640", "#4b2a6a", "#c9739c"],
-    sun: { x: 0.3, y: 0.38, r: 40, core: "#f6ecff", glow: "rgba(200,170,255,0.45)" },
-    layers: [
-      { color: "#3a2a5e", base: 0.6, amp: 120, par: 0.04, freq: [1, 3, 4], jag: 0.6 },
-      { color: "#251a44", base: 0.67, amp: 92, par: 0.13, freq: [2, 4, 9], jag: 0.7 },
-      { color: "#150f2a", base: 0.75, amp: 40, par: 0.32, freq: [3, 6, 13], jag: 0.35 },
-    ],
-    fog: "rgba(201,115,156,0.14)",
-    ground: ["#0d0a18", "#05040b"],
-    road: "#141026",
-    roadMark: "rgba(239,233,220,0.05)",
-    props: "lantern",
+    name: "The Long Night",
+    base: "#020509",
+    neb: ["#0b4a5a", "#123a7a", "#5a1440", "#0a6a6a"],
+    horizon: "90,220,210",
+    floorTint: "60,180,190",
+    feature: "aurora",
     motes: "ember",
-    moteColor: "255,190,140",
-    propColor: "#0b0817",
-    propGlow: "rgba(255,190,120,0.9)",
+    moteColor: "150,255,230",
+    ridge: "#03080d",
+    ridgeRim: "90,220,210",
   },
   {
     name: "The Summit",
-    sky: ["#2a2838", "#6e6474", "#cdb48c", "#fff3d2"],
-    sun: { x: 0.5, y: 0.34, r: 52, core: "#fffaf0", glow: "rgba(255,240,200,0.7)", ring: true },
-    layers: [
-      { color: "#b9a68e", base: 0.56, amp: 150, par: 0.03, freq: [1, 2, 3], jag: 0.9 },
-      { color: "#7f6e60", base: 0.65, amp: 100, par: 0.11, freq: [2, 3, 8], jag: 0.8 },
-      { color: "#3e332c", base: 0.75, amp: 44, par: 0.3, freq: [3, 7, 12], jag: 0.4 },
-    ],
-    fog: "rgba(255,243,210,0.22)",
-    ground: ["#1a1512", "#0a0807"],
-    road: "#221c18",
-    roadMark: "rgba(255,243,210,0.07)",
-    props: "monolith",
+    base: "#0a0710",
+    neb: ["#6a4a2a", "#8a5a3a", "#3a2a6a", "#a07a4a"],
+    horizon: "255,226,170",
+    floorTint: "255,210,150",
+    feature: "ring",
     motes: "snow",
-    moteColor: "255,250,240",
-    propColor: "#16110e",
-    propGlow: "rgba(255,230,170,0.0)",
+    moteColor: "255,244,220",
+    ridge: "#0d0a0c",
+    ridgeRim: "255,220,160",
   },
 ];
 
-const TILE = 2400;
 const TAU = Math.PI * 2;
 
-function hash(n: number): number {
-  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
-  return s - Math.floor(s);
+function mulberry(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-interface Mote { x: number; y: number; s: number; v: number; ph: number }
+interface Star { x: number; y: number; s: number; tw: number; layer: number }
+interface Shoot { x: number; y: number; vx: number; vy: number; life: number }
 
 export class Scene {
   readonly theme: Theme;
-  private phases: number[][];
-  private motes: Mote[] = [];
-  private skyCache: { h: number; g: CanvasGradient } | null = null;
+  private tile: HTMLCanvasElement;
+  private stars: Star[] = [];
+  private ridge: number[] = [];
+  private shoots: Shoot[] = [];
+  private rnd: () => number;
+  private hue: number;
+  private featX: number;
+  private lastT = 0;
+  /** 0..1, set by the view from chain length; the sky answers the chain. */
+  energy = 0;
 
-  constructor(act: number) {
+  constructor(act: number, variant = 0) {
     this.theme = THEMES[Math.max(0, Math.min(2, act - 1))]!;
-    this.phases = this.theme.layers.map((_, i) => [0, 1, 2, 3, 4].map((k) => hash(act * 31 + i * 7 + k) * TAU));
-    for (let i = 0; i < 70; i++) this.motes.push({ x: hash(i * 3.1) , y: hash(i * 7.7), s: 0.5 + hash(i * 1.3) * 1.8, v: 0.3 + hash(i * 9.1), ph: hash(i * 5.3) * TAU });
+    this.rnd = mulberry(act * 7919 + variant * 104729 + 17);
+    const r = this.rnd;
+    this.hue = (r() - 0.5) * 36;
+    this.featX = 0.18 + r() * 0.64;
+    this.tile = this.makeTile();
+    for (let i = 0; i < 420; i++) this.stars.push({ x: r(), y: r() * 0.95, s: r() ** 5 * 2.6 + 0.5, tw: r() * TAU, layer: r() < 0.6 ? 0 : r() < 0.7 ? 1 : 2 });
+    for (let i = 0; i < 64; i++) this.ridge.push(r());
   }
 
-  private height(li: number, wx: number): number {
-    const L = this.theme.layers[li]!;
-    const ph = this.phases[li]!;
-    let h = 0, norm = 0;
-    L.freq.forEach((f, k) => {
-      const w = 1 / (k + 1);
-      h += Math.sin((wx / TILE) * TAU * f + ph[k]!) * w;
-      norm += w;
-    });
-    h /= norm;
-    // jagged ridges: fold the sine for sharp peaks
-    const j = 1 - Math.abs(Math.sin((wx / TILE) * TAU * (L.freq[2]! * 2) + ph[3]!));
-    return h * (1 - L.jag * 0.5) + j * L.jag * 0.5;
+  private makeTile(): HTMLCanvasElement {
+    const c = document.createElement("canvas");
+    c.width = 1400;
+    c.height = 520;
+    const g = c.getContext("2d")!;
+    g.fillStyle = this.theme.base;
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = "lighter";
+    g.filter = `hue-rotate(${this.hue}deg)`;
+    const r = this.rnd;
+    for (let i = 0; i < 30; i++) {
+      // wrap-safe: draw each cloud twice so the tile tiles horizontally
+      const x = r() * c.width, y = r() * c.height * 0.9, rad = 50 + r() * c.width * 0.28;
+      for (const ox of [0, -c.width, c.width]) {
+        const gr = g.createRadialGradient(x + ox, y, 0, x + ox, y, rad);
+        gr.addColorStop(0, this.theme.neb[i % this.theme.neb.length]!);
+        gr.addColorStop(1, "rgba(0,0,0,0)");
+        g.globalAlpha = 0.14 + r() * 0.24;
+        g.fillStyle = gr;
+        g.fillRect(x + ox - rad, y - rad, rad * 2, rad * 2);
+      }
+    }
+    g.filter = "none";
+    g.globalAlpha = 1;
+    // fine dust
+    for (let i = 0; i < 2600; i++) {
+      g.fillStyle = `rgba(255,255,255,${r() * 0.18})`;
+      g.fillRect(r() * c.width, r() * c.height, 1, 1);
+    }
+    return c;
   }
 
   draw(ctx: CanvasRenderingContext2D, camX: number, W: number, H: number, groundY: number, t: number, flash = 0): void {
+    const dt = Math.max(0, Math.min(0.05, t - this.lastT));
+    this.lastT = t;
     const th = this.theme;
-    if (!this.skyCache || this.skyCache.h !== H) {
-      const g = ctx.createLinearGradient(0, 0, 0, groundY);
-      g.addColorStop(0, th.sky[0]);
-      g.addColorStop(0.4, th.sky[1]);
-      g.addColorStop(0.75, th.sky[2]);
-      g.addColorStop(1, th.sky[3]);
-      this.skyCache = { h: H, g };
-    }
-    ctx.fillStyle = this.skyCache.g;
-    ctx.fillRect(-40, -40, W + 80, groundY + 42);
+    ctx.fillStyle = th.base;
+    ctx.fillRect(-40, -40, W + 80, H + 80);
 
-    // celestial body
-    const sx = W * th.sun.x, sy = groundY * th.sun.y + 40;
-    const glow = ctx.createRadialGradient(sx, sy, th.sun.r * 0.4, sx, sy, th.sun.r * 5);
-    glow.addColorStop(0, th.sun.glow);
-    glow.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(sx - th.sun.r * 5, sy - th.sun.r * 5, th.sun.r * 10, th.sun.r * 10);
-    ctx.fillStyle = th.sun.core;
-    ctx.beginPath();
-    ctx.arc(sx, sy, th.sun.r, 0, TAU);
-    ctx.fill();
-    if (th.sun.ring) {
+    // nebula tile, slow parallax + drift
+    const tw = this.tile.width, scale = (groundY + 40) / this.tile.height;
+    const sw = tw * scale;
+    let ox = -(((camX * 0.04 + t * 3) % sw) + sw) % sw;
+    ctx.globalAlpha = 0.85 + this.energy * 0.35;
+    for (; ox < W + 40; ox += sw) ctx.drawImage(this.tile, ox - 20, -20, sw, groundY + 60);
+    ctx.globalAlpha = 1;
+
+    // feature
+    const fx = W * this.featX - camX * 0.02;
+    if (th.feature === "moon") {
+      const fy = groundY * 0.3, r = 46;
+      glowAt(ctx, fx, fy, r * 6, "200,190,255", 0.35 + this.energy * 0.2);
+      ctx.drawImage(crescent(r), fx - r - 2, fy - r - 2);
+    } else if (th.feature === "aurora") {
       ctx.save();
-      ctx.strokeStyle = "rgba(255,246,220,0.35)";
-      ctx.lineWidth = 2;
-      for (let i = 0; i < 3; i++) {
-        ctx.globalAlpha = 0.6 - i * 0.18;
+      ctx.globalCompositeOperation = "lighter";
+      for (let b = 0; b < 3; b++) {
+        const g = ctx.createLinearGradient(0, groundY * 0.1, 0, groundY * 0.65);
+        const col = b === 1 ? "180,80,200" : th.horizon;
+        g.addColorStop(0, `rgba(${col},0)`);
+        g.addColorStop(0.5, `rgba(${col},${0.12 + this.energy * 0.1})`);
+        g.addColorStop(1, `rgba(${col},0)`);
+        ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(sx, sy, th.sun.r * (1.9 + i * 0.75) + Math.sin(t * 0.6 + i) * 3, 0, TAU);
+        for (let x = -20; x <= W + 20; x += 16) {
+          const y = groundY * (0.25 + b * 0.08) + Math.sin(x * 0.006 + t * 0.4 + b * 2) * 40 + Math.sin(x * 0.017 - t * 0.7) * 14;
+          if (x === -20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        for (let x = W + 20; x >= -20; x -= 16) {
+          const y = groundY * (0.48 + b * 0.06) + Math.sin(x * 0.005 + t * 0.3 + b) * 30;
+          ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    } else {
+      const fy = groundY * 0.34, r = 54;
+      glowAt(ctx, fx, fy, r * 7, "255,230,180", 0.45 + this.energy * 0.25);
+      ctx.fillStyle = "#fff8ea";
+      ctx.beginPath(); ctx.arc(fx, fy, r, 0, TAU); ctx.fill();
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,240,210,0.5)";
+      for (let i = 0; i < 3; i++) {
+        ctx.lineWidth = 2.5 - i * 0.6;
+        ctx.beginPath();
+        ctx.ellipse(fx, fy, r * (2.2 + i * 0.5), r * (0.42 + i * 0.1), -0.18 + Math.sin(t * 0.2) * 0.02, 0, TAU);
         ctx.stroke();
       }
       ctx.restore();
     }
 
-    // mountain layers
-    th.layers.forEach((L, li) => {
-      const off = camX * L.par;
-      const base = groundY * L.base + 30 * li;
-      ctx.fillStyle = L.color;
-      ctx.beginPath();
-      ctx.moveTo(-40, groundY + 4);
-      for (let x = -40; x <= W + 44; x += 6) ctx.lineTo(x, base - this.height(li, x + off) * L.amp - L.amp * 0.3);
-      ctx.lineTo(W + 44, groundY + 4);
-      ctx.closePath();
-      ctx.fill();
-      // fog band at each layer foot
-      const fg = ctx.createLinearGradient(0, base - 30, 0, groundY);
-      fg.addColorStop(0, "rgba(0,0,0,0)");
-      fg.addColorStop(1, th.fog);
-      ctx.fillStyle = fg;
-      ctx.fillRect(0, base - 30, W, groundY - base + 30);
-    });
-
-    this.drawProps(ctx, camX * 0.6, W, groundY, t);
-
-    // ground
-    const gg = ctx.createLinearGradient(0, groundY - 64, 0, H);
-    gg.addColorStop(0, th.ground[0]);
-    gg.addColorStop(1, th.ground[1]);
-    ctx.fillStyle = gg;
-    ctx.fillRect(-40, groundY - 64, W + 80, H - groundY + 104);
-    // horizon rim light
-    ctx.fillStyle = th.fog.replace(/[\d.]+\)$/, "0.5)");
-    ctx.fillRect(0, groundY - 64, W, 1.5);
-    // road
-    ctx.fillStyle = th.road;
-    ctx.fillRect(-40, groundY - 34, W + 80, 66);
-    ctx.fillStyle = th.roadMark;
-    const step = 90;
-    const start = Math.floor(camX / step) * step;
-    for (let wx = start; wx < camX + W + step; wx += step) {
-      const x = wx - camX;
-      const r = hash(wx * 0.37);
-      ctx.fillRect(x, groundY - 30 + r * 52, 22 + r * 40, 2);
-      ctx.fillRect(x + 40, groundY + 30, 50, 1.5);
+    // stars, three parallax layers with twinkle
+    for (const s of this.stars) {
+      const par = [0.02, 0.06, 0.12][s.layer]!;
+      const x = ((((s.x * W * 1.3 - camX * par) % (W * 1.3)) + W * 1.3) % (W * 1.3)) - W * 0.15;
+      const y = s.y * groundY;
+      const a = 0.45 + 0.55 * Math.sin(t * (1 + s.layer) + s.tw) ** 2;
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.fillRect(x, y, s.s, s.s);
+      if (s.s > 2.3) {
+        ctx.globalAlpha = a * 0.45;
+        ctx.fillRect(x - 6, y + s.s / 2 - 0.4, 12 + s.s, 0.8);
+        ctx.fillRect(x + s.s / 2 - 0.4, y - 6, 0.8, 12 + s.s);
+        ctx.globalAlpha = 1;
+      }
     }
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, groundY + 32, W, 3);
 
-    this.drawMotes(ctx, camX, W, groundY, t);
-    this.drawForeground(ctx, camX * 1.35, W, H, t);
+    // shooting stars (more as the chain climbs)
+    if (this.rnd() < dt * (0.25 + this.energy * 2)) {
+      this.shoots.push({ x: this.rnd() * W, y: this.rnd() * groundY * 0.4, vx: -500 - this.rnd() * 400, vy: 150 + this.rnd() * 150, life: 0 });
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const s of this.shoots) {
+      s.life += dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      const a = Math.max(0, 1 - s.life / 0.7);
+      const g = ctx.createLinearGradient(s.x, s.y, s.x - s.vx * 0.12, s.y - s.vy * 0.12);
+      g.addColorStop(0, `rgba(255,255,255,${a})`);
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x - s.vx * 0.12, s.y - s.vy * 0.12);
+      ctx.stroke();
+    }
+    ctx.restore();
+    this.shoots = this.shoots.filter((s) => s.life < 0.7);
+
+    // far ridge with rim light
+    const off = camX * 0.18;
+    ctx.fillStyle = th.ridge;
+    ctx.beginPath();
+    ctx.moveTo(-40, groundY + 2);
+    const pts: [number, number][] = [];
+    for (let x = -40; x <= W + 40; x += 10) {
+      const u = (x + off) / 120;
+      const i = Math.floor(u), f = u - i;
+      const a = this.ridge[((i % 64) + 64) % 64]!, b = this.ridge[(((i + 1) % 64) + 64) % 64]!;
+      const h = a + (b - a) * (f * f * (3 - 2 * f));
+      const y = groundY - 18 - h * 70;
+      pts.push([x, y]);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W + 40, groundY + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${th.ridgeRim},0.35)`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.stroke();
+
+    // horizon glow
+    const hg = ctx.createLinearGradient(0, groundY - 60, 0, groundY + 2);
+    hg.addColorStop(0, `rgba(${th.horizon},0)`);
+    hg.addColorStop(1, `rgba(${th.horizon},${0.32 + this.energy * 0.25})`);
+    ctx.fillStyle = hg;
+    ctx.fillRect(-40, groundY - 60, W + 80, 62);
+
+    // motes
+    for (let i = 0; i < 60; i++) {
+      const sx = (i * 97.13) % 1, sy = (i * 61.7) % 1, v = 0.4 + ((i * 13.1) % 1);
+      let x: number, y: number;
+      if (th.motes === "snow") {
+        x = ((sx * W * 1.3 - camX * 0.5 * v - t * 26 * v) % (W * 1.3) + W * 1.3) % (W * 1.3) - W * 0.15;
+        y = (sy * groundY + t * 34 * v) % groundY;
+      } else if (th.motes === "ember") {
+        x = ((sx * W * 1.3 - camX * 0.4 * v + Math.sin(t + i) * 18) % (W * 1.3) + W * 1.3) % (W * 1.3) - W * 0.15;
+        y = groundY - ((sy * groundY * 0.8 + t * 20 * v) % (groundY * 0.8));
+      } else {
+        x = ((sx * W * 1.3 - camX * 0.3 * v - t * 10 * v) % (W * 1.3) + W * 1.3) % (W * 1.3) - W * 0.15;
+        y = groundY * (0.3 + sy * 0.7) + Math.sin(t * 0.8 + i) * 10;
+      }
+      ctx.fillStyle = `rgba(${th.moteColor},${0.25 + 0.3 * Math.sin(t * 1.4 + i) ** 2})`;
+      ctx.fillRect(x, y, 1.6 * v, 1.6 * v);
+    }
 
     if (flash > 0) {
       ctx.fillStyle = `rgba(255,255,255,${flash})`;
@@ -204,111 +282,53 @@ export class Scene {
     }
   }
 
-  private drawProps(ctx: CanvasRenderingContext2D, off: number, W: number, gy: number, t: number): void {
+  /** Floor drawn after the world and its reflection. */
+  drawFloor(ctx: CanvasRenderingContext2D, camX: number, W: number, H: number, groundY: number, t: number): void {
     const th = this.theme;
-    const spacing = 520;
-    const first = Math.floor((off - 200) / spacing);
-    ctx.fillStyle = th.propColor;
-    for (let i = first; i < first + Math.ceil(W / spacing) + 3; i++) {
-      const r = hash(i * 13.7);
-      if (r < 0.25) continue;
-      const x = i * spacing + r * 260 - off;
-      const y = gy - 60;
-      const s = 0.75 + hash(i * 3.3) * 0.5;
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.scale(s, s);
-      if (th.props === "torii") {
-        if (r > 0.6) {
-          // torii gate
-          ctx.fillRect(-46, -110, 7, 110);
-          ctx.fillRect(39, -110, 7, 110);
-          ctx.beginPath();
-          ctx.moveTo(-66, -118); ctx.quadraticCurveTo(0, -112, 66, -122); ctx.lineTo(62, -110); ctx.quadraticCurveTo(0, -102, -62, -108);
-          ctx.fill();
-          ctx.fillRect(-52, -96, 104, 6);
-        } else {
-          // windswept tree
-          ctx.fillRect(-3, -70, 6, 70);
-          ctx.beginPath();
-          ctx.ellipse(-18, -82, 42, 14, -0.15, 0, TAU);
-          ctx.ellipse(-30, -98, 28, 10, -0.2, 0, TAU);
-          ctx.fill();
-        }
-      } else if (th.props === "lantern") {
-        // stone lantern
-        ctx.fillRect(-6, -40, 12, 40);
-        ctx.fillRect(-14, -48, 28, 8);
-        ctx.fillRect(-11, -66, 22, 18);
-        ctx.beginPath();
-        ctx.moveTo(-20, -66); ctx.lineTo(0, -82); ctx.lineTo(20, -66); ctx.fill();
-        const flick = 0.75 + Math.sin(t * 9 + i) * 0.12 + Math.sin(t * 23 + i * 2) * 0.08;
-        const lg = ctx.createRadialGradient(0, -57, 1, 0, -57, 46);
-        lg.addColorStop(0, th.propGlow.replace(/[\d.]+\)$/, `${0.55 * flick})`));
-        lg.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = lg;
-        ctx.fillRect(-46, -103, 92, 92);
-        ctx.fillStyle = `rgba(255,214,150,${flick})`;
-        ctx.fillRect(-5, -62, 10, 9);
-        ctx.fillStyle = th.propColor;
-      } else {
-        // monolith with prayer flags
-        ctx.beginPath();
-        ctx.moveTo(-14, 0); ctx.lineTo(-10, -120 * s); ctx.lineTo(8, -130 * s); ctx.lineTo(16, 0);
-        ctx.fill();
-        if (r > 0.55) {
-          ctx.strokeStyle = th.propColor;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(8, -110); ctx.quadraticCurveTo(70, -80, 140, -96);
-          ctx.stroke();
-          for (let k = 0; k < 7; k++) {
-            const fx = 14 + k * 18, fy = -106 + Math.sin((k + 1) / 8 * Math.PI) * 18;
-            ctx.fillRect(fx, fy + Math.sin(t * 4 + k) * 1.5, 9, 12);
-          }
-        }
-      }
-      ctx.restore();
+    const fg = ctx.createLinearGradient(0, groundY, 0, H);
+    fg.addColorStop(0, "rgba(4,3,10,0.35)");
+    fg.addColorStop(0.5, "rgba(4,3,10,0.85)");
+    fg.addColorStop(1, "rgba(3,2,7,1)");
+    ctx.fillStyle = fg;
+    ctx.fillRect(-40, groundY + 2, W + 80, H - groundY + 40);
+    // ripples / glints moving with the camera
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const step = 70;
+    const start = Math.floor(camX / step) * step;
+    for (let wx = start; wx < camX + W + step; wx += step) {
+      const h = Math.sin(wx * 12.9898) * 43758.5453;
+      const r = h - Math.floor(h);
+      const x = wx - camX;
+      const y = groundY + 10 + r * (H - groundY - 30);
+      const a = (0.05 + 0.08 * Math.sin(t * 1.2 + r * 10) ** 2) * (1 - (y - groundY) / (H - groundY));
+      ctx.fillStyle = `rgba(${th.floorTint},${a})`;
+      ctx.fillRect(x, y, 24 + r * 60, 1);
     }
+    ctx.restore();
+    ctx.fillStyle = `rgba(${th.horizon},0.75)`;
+    ctx.fillRect(-40, groundY + 1, W + 80, 1);
   }
+}
 
-  private drawMotes(ctx: CanvasRenderingContext2D, camX: number, W: number, gy: number, t: number): void {
-    const th = this.theme;
-    for (const m of this.motes) {
-      let x: number, y: number, a: number;
-      if (th.motes === "snow") {
-        x = ((m.x * W * 1.4 - camX * 0.5 * m.v - t * 30 * m.v) % (W * 1.4) + W * 1.4) % (W * 1.4) - W * 0.2;
-        y = ((m.y * gy + t * 40 * m.v) % (gy + 60));
-        a = 0.35 + m.v * 0.4;
-      } else if (th.motes === "ember") {
-        x = ((m.x * W * 1.4 - camX * 0.4 * m.v + Math.sin(t + m.ph) * 20) % (W * 1.4) + W * 1.4) % (W * 1.4) - W * 0.2;
-        y = gy - ((m.y * gy * 0.8 + t * 22 * m.v) % (gy * 0.8));
-        a = (0.4 + 0.5 * Math.sin(t * 3 + m.ph)) * 0.8;
-      } else {
-        x = ((m.x * W * 1.4 - camX * 0.3 * m.v - t * 12 * m.v) % (W * 1.4) + W * 1.4) % (W * 1.4) - W * 0.2;
-        y = gy * (0.35 + m.y * 0.65) + Math.sin(t * 0.8 + m.ph) * 12;
-        a = 0.25 + 0.25 * Math.sin(t * 1.3 + m.ph);
-      }
-      ctx.fillStyle = `rgba(${th.moteColor},${Math.max(0, a)})`;
-      ctx.fillRect(x, y, m.s, m.s);
-    }
-  }
+function glowAt(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, rgb: string, a: number): void {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(${rgb},${a})`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
 
-  private drawForeground(ctx: CanvasRenderingContext2D, off: number, W: number, H: number, t: number): void {
-    ctx.fillStyle = "#030205";
-    const spacing = 34;
-    const first = Math.floor(off / spacing);
-    for (let i = first; i < first + Math.ceil(W / spacing) + 2; i++) {
-      const r = hash(i * 7.31);
-      if (r < 0.35) continue;
-      const x = i * spacing - off;
-      const h = 14 + r * 34;
-      const sway = Math.sin(t * 1.6 + i) * 4;
-      ctx.beginPath();
-      ctx.moveTo(x - 5, H);
-      ctx.quadraticCurveTo(x, H - h * 0.6, x + sway, H - h);
-      ctx.quadraticCurveTo(x + 2, H - h * 0.5, x + 6, H);
-      ctx.fill();
-    }
-  }
+let moonC: HTMLCanvasElement | null = null;
+function crescent(r: number): HTMLCanvasElement {
+  if (moonC) return moonC;
+  const c = document.createElement("canvas");
+  c.width = c.height = r * 2 + 4;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#ece8ff";
+  g.beginPath(); g.arc(r + 2, r + 2, r, 0, TAU); g.fill();
+  g.globalCompositeOperation = "destination-out";
+  g.beginPath(); g.arc(r + 2 + r * 0.42, r + 2 - r * 0.18, r * 0.9, 0, TAU); g.fill();
+  moonC = c;
+  return c;
 }

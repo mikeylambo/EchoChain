@@ -19,6 +19,7 @@ export class DevOverlay {
       view: () => g.view,
       world: () => g.fightWorld,
       run: () => g.run,
+      hq: () => { g.view.lockQuality = true; },
       win: () => g.forceOutcome(true),
       lose: () => g.forceOutcome(false),
       charge: () => { const w = g.fightWorld; if (w) w.charge = 999; },
@@ -31,9 +32,9 @@ export class DevOverlay {
       },
       reset: () => { localStorage.removeItem("echochain.profile.v1"); location.reload(); },
       /** Sandbox: any trail vs any enemies in the live view. */
-      sandbox: (trail: string[], enemies: EnemyKind[] = ["husk", "husk", "bulwark"], act = 1, rank: 1 | 2 | 3 = 1) => {
+      sandbox: (trail: string[], enemies: EnemyKind[] = ["husk", "husk", "bulwark"], act = 1, rank: 1 | 2 | 3 = 1, form: "duelist" | "brawler" | "phantom" = "duelist") => {
         const w = new World({
-          seed: "SANDBOX", form: "duelist", trail: trail.filter((t) => TECH[t]).map((tech) => ({ tech, rank })), act, hp: 9999, maxHp: 9999, ascension: 0, sandbox: true,
+          seed: "SANDBOX", form, trail: trail.filter((t) => TECH[t]).map((tech) => ({ tech, rank })), act, hp: 9999, maxHp: 9999, ascension: 0, sandbox: true,
           plan: { family: "mixed", groups: enemies.map((kind, i) => ({ at: i * 0.6, kind, count: 1 })) },
         });
         g.view.setWorld(w, act);

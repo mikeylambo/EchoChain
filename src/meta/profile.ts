@@ -11,6 +11,7 @@ export interface Settings {
   reducedFlash: boolean;
   reducedShake: boolean;
   numbers: boolean;
+  outfit: "coat" | "cloak" | "scarf";
 }
 
 export interface CodexEntry {
@@ -39,7 +40,7 @@ export interface Profile {
 
 const KEY = "echochain.profile.v1";
 
-export const DEFAULT_SETTINGS: Settings = { master: 0.8, music: 0.6, sfx: 0.8, speed: 1, reducedFlash: false, reducedShake: false, numbers: true };
+export const DEFAULT_SETTINGS: Settings = { master: 0.8, music: 0.6, sfx: 0.8, speed: 1, reducedFlash: false, reducedShake: false, numbers: true, outfit: "coat" };
 
 export function freshProfile(): Profile {
   return {
@@ -109,8 +110,8 @@ export const GOALS: Goal[] = [
   { tech: "pursuit", text: "Win 8 fights in one run", test: (s) => s.fightsWon >= 8 },
   { tech: "shockline", text: "Slam 15 times in one run", test: (s) => s.slams >= 15 },
   { tech: "tempo", text: "Clear a fight in under 14s", test: (s) => s.fastestFightMs < 14000 },
-  { tech: "overdrive", text: "Sync Break twice in one fight", test: (s) => s.maxSyncsFight >= 2 },
-  { tech: "harvest", text: "Defeat The Duplicate", test: (s) => s.duplicateDefeated },
+  { tech: "overdrive", text: "Resound twice in one fight", test: (s) => s.maxSyncsFight >= 2 },
+  { tech: "harvest", text: "Defeat Who He Was", test: (s) => s.duplicateDefeated },
   { tech: "burning", text: "March with a 6-echo trail", test: (s) => s.maxTrail >= 6 },
 ];
 

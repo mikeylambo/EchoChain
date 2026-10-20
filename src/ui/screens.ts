@@ -14,6 +14,13 @@ import { buildStrip, famClass, ioIcons, pips, portrait, tileHtml } from "./trail
 
 const ROMAN = ["", "I", "II", "III"];
 
+/** One number per technique. The icons are the rules; this is the size. */
+export const STAT: Record<string, string> = {
+  guard: "6s", read: "300%", needle: "30%", pinpoint: "150%", sunder: "−10%", executioner: "15%", lastlight: "CRIT", riposte: "140%",
+  launcher: "↑", juggler: "×2", slam: "AoE", flurry: "×3", pursuit: "130%", shockline: "AoE", tempo: "3RD", overdrive: "+4%",
+  mirror: "70%", amplifier: "+60%", prism: "×3", inverse: "⇄", doppel: "+1", bell: "AoE", harvest: "+8%", burning: "2s",
+};
+
 // ───────────────────────── Title
 export function titleScreen(p: Profile): Promise<"continue" | "new" | "codex" | "settings"> {
   return new Promise((resolve) => {
@@ -37,6 +44,7 @@ export function titleScreen(p: Profile): Promise<"continue" | "new" | "codex" | 
     pop = keys((e) => {
       if (e.key === "Enter") go(p.savedRun ? "continue" : "new");
     });
+    s.dataset.screen = "title";
     mount(s);
   });
 }
@@ -50,7 +58,7 @@ export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
     let asc = 0;
     let mode: "standard" | "endless" = "standard";
     const s = el("div", "scr dim");
-    s.innerHTML = `<div class="kicker">Choose your form</div><div class="h1">One Becomes Many</div><div class="sub">Your echoes take the shape of the fighter you choose.</div>`;
+    s.innerHTML = ``;
     const forms = el("div", "forms");
     const cards: HTMLElement[] = [];
     const lockText: Record<FormId, string> = { duelist: "", brawler: "Clear Act I", phantom: "Clear a run" };
@@ -59,8 +67,8 @@ export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
       const locked = !p.forms.includes(id);
       const c = el("div", `form-card ${locked ? "locked" : ""}`);
       c.tabIndex = locked ? -1 : 0;
-      c.innerHTML = `<canvas></canvas><div class="fn">${f.name}</div><div class="fd">${f.desc}${id === "brawler" ? " — every strike emits Stagger" : id === "phantom" ? " — starts with 3 echo slots" : " — balanced, crit-leaning"}</div>
-        <div class="fs"><span>${UI_ICON.heart.replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-1px"')} ${f.hp}</span><span>Strike ${f.interval}s</span><span>Slots ${f.startSlots}</span></div>
+      c.innerHTML = `<canvas></canvas><div class="fn">${f.name}</div>
+        <div class="fs"><span>${UI_ICON.heart.replace("<svg", '<svg style="width:12px;height:12px;vertical-align:-1px"')} ${f.hp}</span><span>${f.interval}s</span><span>${"◆".repeat(f.startSlots)}</span></div>
         ${locked ? `<div class="lockline">${UI_ICON.lock} ${lockText[id]}</div>` : ""}`;
       portrait(c.querySelector("canvas")!, id, 140, 150, 1.25, locked ? "idle" : "victory", locked ? 0.3 : 0.6);
       if (!locked) {
@@ -73,7 +81,7 @@ export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
     s.appendChild(forms);
     const opts = el("div", "col");
     const modeCtl = el("div", "seg-ctl");
-    modeCtl.innerHTML = `<button data-m="standard">Standard</button><button data-m="endless" ${p.endless ? "" : "disabled title='Clear a run to unlock'"}>Endless Road</button>`;
+    modeCtl.innerHTML = `<button data-m="standard">Ascent</button><button data-m="endless" ${p.endless ? "" : "disabled"}>Endless</button>`;
     modeCtl.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { mode = b.dataset.m as typeof mode; audio.ui("tick"); sync(); }));
     opts.appendChild(modeCtl);
     const ascRow = el("div", "col");
@@ -86,7 +94,7 @@ export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
     const row = el("div", "row");
     row.style.marginTop = "22px";
     const back = btn("Back", "btn ghost", () => { pop(); resolve(null); }, "back");
-    const go = btn("Begin the March", "btn primary", () => start());
+    const go = btn("March", "btn primary", () => start());
     go.dataset.autofocus = "";
     row.append(back, go);
     s.appendChild(row);
@@ -96,7 +104,7 @@ export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
       const v = ascRow.querySelector(".val");
       if (v) v.textContent = String(asc);
       const d = ascRow.querySelector(".asc-desc");
-      if (d) d.textContent = asc === 0 ? "The road as it was written." : ASCENSIONS.slice(0, asc).map((a) => a.desc).slice(-2).join(" · ");
+      if (d) d.textContent = asc === 0 ? "" : ASCENSIONS[asc - 1]!.desc;
     }
     function start() { pop(); resolve({ form, ascension: mode === "endless" ? 0 : asc, mode }); }
     const pop = keys((e) => {
@@ -111,47 +119,38 @@ export function newRunScreen(p: Profile): Promise<NewRunChoice | null> {
       }
     });
     sync();
+    s.dataset.screen = "newRun";
     mount(s);
   });
 }
 
 // ───────────────────────── Draft
-export interface DraftOpts { title: string; kicker?: string; banner?: string; sub?: string }
+export interface DraftOpts { title?: string; kicker?: string; banner?: string; sub?: string }
 
 function cardEl(card: DraftCard, run: RunState, idx: number): HTMLElement {
   if (card.kind === "seal") {
     const d = SEAL[card.seal]!;
     const c = el("div", "card seal");
-    c.innerHTML = `<span class="key">${idx + 1}</span><div class="glyph">${d.glyph}</div><div class="meta">Seal · Run passive</div><div class="name">${d.name}</div><div class="desc">${d.desc}</div><div class="hint good"><i class="dot"></i>Lasts the whole run</div>`;
+    c.innerHTML = `<span class="key">${idx + 1}</span><div class="glyph">${d.glyph}</div><div class="name">${d.name}</div><div class="chip-stat">${d.desc}</div>`;
     return c;
   }
   const t = TECH[card.tech]!;
   const c = el("div", `card ${famClass(card.tech)}`);
   const owned = run.trail.find((s) => s.tech === card.tech);
-  let hint = "";
-  let good = false;
-  if (card.kind === "rank") {
-    const r = owned?.rank ?? 1;
-    hint = `Rank ${ROMAN[r]} → ${ROMAN[r + 1]}${r + 1 === 3 ? ` · unlocks: ${t.rank3}` : " · +50% output"}`;
-    good = true;
-  } else if (run.trail.length < run.slots) {
+  let linked = false;
+  if (card.kind === "rank") linked = true;
+  else if (run.trail.length < run.slots) {
     const test = analyzeTrail([...run.trail, { tech: card.tech, rank: 1 }], run.form);
-    const j = run.trail.length + 1;
-    const prev = j === 1 ? FORMS[run.form].name : TECH[run.trail[j - 2]!.tech]!.name;
-    if (t.receives.includes("ENEMY_ATTACK")) { hint = `Joins slot ${j} · starts its own chain`; good = true; }
-    else if (test.links[j]) { hint = `Joins slot ${j} · links after ${prev}`; good = true; }
-    else hint = `Joins slot ${j} · no link after ${prev} — rearrange`;
-  } else {
-    hint = "Trail full · replaces a slot";
+    linked = !!test.links[run.trail.length + 1] || t.receives.includes("ENEMY_ATTACK");
   }
-  c.innerHTML = `<span class="key">${idx + 1}</span>${card.kind === "rank" ? `<span class="badge">RANK UP</span>` : owned ? "" : `<span class="badge">NEW</span>`}
+  const rank = owned?.rank ?? 1;
+  c.title = `${t.desc} · III: ${t.rank3}`;
+  c.innerHTML = `<span class="key">${idx + 1}</span>
     <div class="glyph">${techIcon(card.tech)}</div>
-    <div class="meta">${t.family} · ${String(t.num).padStart(2, "0")} ${card.kind === "rank" ? pips(owned?.rank ?? 1, true) : ""}</div>
     <div class="name">${t.name}</div>
     <div class="flow">${ioIcons(card.tech)}</div>
-    <div class="desc">${t.desc}</div>
-    <div class="r3"><b>Rank III</b> · ${t.rank3}</div>
-    <div class="hint ${good ? "good" : ""}"><i class="dot"></i>${hint}</div>`;
+    <div class="cardfoot"><span class="chip-stat">${STAT[card.tech] ?? ""}</span>${card.kind === "rank" ? `<span class="rankup">${pips(rank, true)}</span>` : `<span class="linkdot ${linked ? "on" : ""}" title="${linked ? "Links" : "No link"}"></span>`}</div>
+    <div class="desc">${t.desc}<br><b>III</b> ${t.rank3}</div>`;
   return c;
 }
 
@@ -159,9 +158,7 @@ export function draftScreen(cards: DraftCard[], run: RunState, o: DraftOpts): Pr
   return new Promise((resolve) => {
     const s = el("div", "scr dim");
     if (o.banner) s.appendChild(frag(`<div class="reward-banner">${o.banner}</div>`));
-    s.appendChild(frag(`<div class="kicker">${o.kicker ?? "Choose one"}</div>`));
-    s.appendChild(frag(`<div class="h1">${o.title}</div>`));
-    if (o.sub) s.appendChild(frag(`<div class="sub">${o.sub}</div>`));
+    if (o.kicker) s.appendChild(frag(`<div class="kicker">${o.kicker}</div>`));
     const wrap = el("div", "cards");
     let done = false;
     const els = cards.map((c, i) => {
@@ -194,6 +191,7 @@ export function draftScreen(cards: DraftCard[], run: RunState, o: DraftOpts): Pr
       const n = Number(e.key);
       if (n >= 1 && n <= cards.length) pick(n - 1);
     });
+    s.dataset.screen = "draft";
     mount(s);
   });
 }
@@ -203,7 +201,7 @@ export function placeScreen(run: RunState): Promise<number> {
   return new Promise((resolve) => {
     const t = TECH[run.pendingEcho!]!;
     const s = el("div", "scr dim");
-    s.innerHTML = `<div class="kicker">Trail full</div><div class="h1">Make room for ${t.name}</div><div class="sub">Choose an echo to replace, or let it go.</div>`;
+    s.innerHTML = `<div class="kicker">Replace</div>`;
     const st = buildStrip(run.trail, { form: run.form });
     st.tiles.slice(1).forEach((tile, i) => {
       tile.classList.add("target");
@@ -215,9 +213,10 @@ export function placeScreen(run: RunState): Promise<number> {
     incoming.innerHTML = tileHtml({ tech: run.pendingEcho!, rank: 1 }, 0).replace('<span class="slotno">0</span>', '<span class="slotno">NEW</span>');
     s.appendChild(incoming);
     s.appendChild(st.el);
-    const b = btn("Discard", "btn ghost", () => { pop(); resolve(-1); }, "back");
+    const b = btn("Release", "btn ghost", () => { pop(); resolve(-1); }, "back");
     s.appendChild(b);
     const pop = keys((e) => { if (e.key === "Escape") { pop(); resolve(-1); } });
+    s.dataset.screen = "place";
     mount(s);
   });
 }
@@ -226,7 +225,7 @@ export function placeScreen(run: RunState): Promise<number> {
 export function arrangeScreen(run: RunState, opts: { cta?: string } = {}): Promise<void> {
   return new Promise((resolve) => {
     const s = el("div", "scr dim arrange");
-    s.innerHTML = `<div class="kicker">Formation</div><div class="h1">The Order Is the Build</div><div class="sub">Drag to reorder. Each echo only hears the one directly ahead of it.</div>`;
+    s.innerHTML = ``;
     const holder = el("div");
     const meta = el("div", "trail-meta");
     s.append(holder, meta);
@@ -236,7 +235,7 @@ export function arrangeScreen(run: RunState, opts: { cta?: string } = {}): Promi
       const st = buildStrip(run.trail, { form: run.form, slots: run.slots });
       holder.appendChild(st.el);
       const info = analyzeTrail(run.trail, run.form);
-      meta.innerHTML = `<span>Longest chain <b>×${info.longest}</b></span><span>Links <b>${info.count}/${run.trail.length}</b></span><span>Slots <b>${run.trail.length}/${run.slots}</b></span>`;
+      meta.innerHTML = `<span class="bigchain">×${info.longest}</span>`;
       st.tiles.slice(1, run.trail.length + 1).forEach((tile, i) => {
         tile.tabIndex = 0;
         if (i === sel) tile.classList.add("sel");
@@ -314,11 +313,11 @@ export function arrangeScreen(run: RunState, opts: { cta?: string } = {}): Promi
     render();
     const row = el("div", "row");
     row.style.marginTop = "14px";
-    const auto = btn(`${UI_ICON.auto.replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;margin-right:8px"')}Auto-arrange`, "btn", () => {
+    const auto = btn(`${UI_ICON.auto.replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;margin-right:8px"')}Auto`, "btn", () => {
       arrange(run, bestOrder(run.trail, run.form).map((x) => x.tech));
       render();
     }, "tick");
-    const go = btn(`${opts.cta ?? "March On"}<span class="k">ENTER</span>`, "btn primary", () => { pop(); resolve(); });
+    const go = btn(`${opts.cta ?? "March"}<span class="k">ENTER</span>`, "btn primary", () => { pop(); resolve(); });
     go.dataset.autofocus = "";
     row.append(auto, go);
     s.appendChild(row);
@@ -326,6 +325,7 @@ export function arrangeScreen(run: RunState, opts: { cta?: string } = {}): Promi
       if (e.key === "Enter" && !(document.activeElement as HTMLElement)?.classList.contains("tile")) { audio.ui("confirm"); pop(); resolve(); }
       if (e.key.toLowerCase() === "a") { arrange(run, bestOrder(run.trail, run.form).map((x) => x.tech)); render(); }
     });
+    s.dataset.screen = "arrange";
     mount(s);
   });
 }
@@ -341,9 +341,9 @@ const FAMILY_INFO: Record<string, [string, string]> = {
 };
 
 export function nodeInfo(n: MapNode): [string, string] {
-  if (n.type === "forge") return ["Forge", "Rank up one echo."];
-  if (n.type === "rest") return ["Rest", "Heal 40% of your HP, or take a Seal."];
-  if (n.type === "elite") return ["Elite · Twin Lancer", "Two hasted throwers behind a wall of husks."];
+  if (n.type === "forge") return ["Forge", ""];
+  if (n.type === "rest") return ["Rest", ""];
+  if (n.type === "elite") return ["Twin Lancer", ""];
   if (n.type === "boss") {
     const b = n.plan?.boss === "original" ? "original" : "duplicate";
     return b === "duplicate"
@@ -360,7 +360,7 @@ export function mapScreen(run: RunState): Promise<MapAction> {
     const s = el("div", "scr dim map-scr");
     const endless = run.mode === "endless";
     const theme = THEMES[Math.min(2, (endless ? Math.min(3, 1 + Math.floor(run.endlessDepth / 5)) : run.act) - 1)]!;
-    s.innerHTML = `<div class="kicker">${endless ? `Endless Road · Depth ${run.endlessDepth + 1}` : `Act ${ROMAN[run.act]}`}</div><div class="h1">${endless ? "The Road Without End" : theme.name}</div>`;
+    s.innerHTML = `<div class="kicker">${endless ? `∞ ${run.endlessDepth + 1}` : ROMAN[run.act]}</div><div class="h1">${endless ? "Endless" : theme.name}</div>`;
     const stat = el("div", "statbar");
     stat.innerHTML = `<span class="chip">${UI_ICON.heart.replace("<svg", '<svg style="width:12px;height:12px"')} ${Math.ceil(run.hp)} / ${run.maxHp}</span><div class="hpbar"><i style="width:${(run.hp / run.maxHp) * 100}%"></i></div>${run.seals.map((id) => `<span class="chip" title="${SEAL[id]?.desc ?? ""}">${SEAL[id]?.glyph ?? ""} ${SEAL[id]?.name ?? id}</span>`).join("")}${run.ascension ? `<span class="chip">Ascension ${run.ascension}</span>` : ""}`;
     s.appendChild(stat);
@@ -391,7 +391,8 @@ export function mapScreen(run: RunState): Promise<MapAction> {
     s.appendChild(info);
     const showInfo = (n: MapNode) => {
       const [a, b] = nodeInfo(n);
-      info.innerHTML = `<b>${a}</b>${b}`;
+      info.innerHTML = `<b>${a}</b>`;
+      void b;
     };
     const cur = currentStep(run);
     showInfo(cur.options[0]!);
@@ -402,7 +403,7 @@ export function mapScreen(run: RunState): Promise<MapAction> {
     const row = el("div", "row");
     row.append(
       btn("Formation <span class='k'>F</span>", "btn", () => { pop(); resolve({ formation: true }); }, "tick"),
-      btn("Menu <span class='k'>ESC</span>", "btn ghost", () => { pop(); resolve({ menu: true }); }, "tick"),
+      btn("<span class='k' style='margin:0'>ESC</span>", "btn ghost small", () => { pop(); resolve({ menu: true }); }, "tick"),
     );
     s.appendChild(row);
     const pop = keys((e) => {
@@ -414,6 +415,7 @@ export function mapScreen(run: RunState): Promise<MapAction> {
       }
       if (e.key === "Enter" && cur.options.length === 1) { audio.ui("confirm"); pop(); resolve({ pick: 0 }); }
     });
+    s.dataset.screen = "map";
     mount(s);
   });
 }
@@ -422,7 +424,7 @@ export function mapScreen(run: RunState): Promise<MapAction> {
 export function forgeScreen(run: RunState): Promise<number> {
   return new Promise((resolve) => {
     const s = el("div", "scr dim");
-    s.innerHTML = `<div class="kicker">Forge</div><div class="h1">Temper One Echo</div><div class="sub">Rank II is +50% output. Rank III doubles it and unlocks a unique bonus.</div>`;
+    s.innerHTML = `<div class="kicker">Forge</div>`;
     const st = buildStrip(run.trail, { form: run.form });
     let any = false;
     st.tiles.slice(1).forEach((tile, i) => {
@@ -435,8 +437,9 @@ export function forgeScreen(run: RunState): Promise<number> {
       tile.addEventListener("click", () => { audio.ui("unlock"); pop(); resolve(i); });
     });
     s.appendChild(st.el);
-    if (!any) s.appendChild(btn("Every echo is mastered — move on", "btn", () => { pop(); resolve(-1); }));
+    if (!any) s.appendChild(btn("March", "btn", () => { pop(); resolve(-1); }));
     const pop = keys((e) => { if (e.key === "Escape" && !any) { pop(); resolve(-1); } });
+    s.dataset.screen = "forge";
     mount(s);
   });
 }
@@ -444,18 +447,19 @@ export function forgeScreen(run: RunState): Promise<number> {
 export function restScreen(run: RunState): Promise<boolean> {
   return new Promise((resolve) => {
     const s = el("div", "scr dim");
-    s.innerHTML = `<div class="kicker">Rest</div><div class="h1">A Quiet Fire</div><div class="sub">${Math.ceil(run.hp)} / ${run.maxHp} HP</div>`;
+    s.innerHTML = `<div class="kicker">Rest</div>`;
     const c = el("div", "choice2");
     const heal = el("button", "bigchoice");
-    heal.innerHTML = `${UI_ICON.heart.replace("<svg", '<svg style="color:var(--bone)"')}<div class="bc1">Heal</div><div class="bc2">Restore ${Math.round(run.maxHp * 0.4)} HP</div>`;
+    heal.innerHTML = `${UI_ICON.heart.replace("<svg", '<svg style="color:var(--bone)"')}<div class="bc1">+${Math.round(run.maxHp * 0.4)}</div><div class="bc2">${Math.ceil(run.hp)} / ${run.maxHp}</div>`;
     const seal = el("button", "bigchoice");
-    seal.innerHTML = `<div style="font-family:var(--display);font-size:40px">◎</div><div class="bc1">Take a Seal</div><div class="bc2">Choose one of three run passives</div>`;
+    seal.innerHTML = `<div style="font-family:var(--display);font-size:40px">◎</div><div class="bc1">Seal</div>`;
     heal.dataset.autofocus = "";
     heal.addEventListener("click", () => { audio.ui("confirm"); pop(); resolve(true); });
     seal.addEventListener("click", () => { audio.ui("confirm"); pop(); resolve(false); });
     c.append(heal, seal);
     s.appendChild(c);
     const pop = keys((e) => { if (e.key === "1") { pop(); resolve(true); } if (e.key === "2") { pop(); resolve(false); } });
+    s.dataset.screen = "rest";
     mount(s);
   });
 }
@@ -464,13 +468,14 @@ export function restScreen(run: RunState): Promise<boolean> {
 export function pauseScreen(): Promise<"resume" | "settings" | "abandon"> {
   return new Promise((resolve) => {
     const s = el("div", "scr dim");
-    s.innerHTML = `<div class="kicker">Paused</div><div class="h1">Hold the Line</div><div class="spacer"></div>`;
+    s.innerHTML = `<div class="kicker">Paused</div><div class="spacer"></div>`;
     const m = el("div", "menu");
     const r = btn("Resume <span class='k'>ESC</span>", "btn primary", () => { pop(); resolve("resume"); });
     r.dataset.autofocus = "";
-    m.append(r, btn("Settings", "btn", () => { pop(); resolve("settings"); }), btn("Save &amp; Quit", "btn ghost", () => { pop(); resolve("abandon"); }, "back"));
+    m.append(r, btn("Settings", "btn", () => { pop(); resolve("settings"); }), btn("Quit", "btn ghost", () => { pop(); resolve("abandon"); }, "back"));
     s.appendChild(m);
     const pop = keys((e) => { if (e.key === "Escape" || e.key.toLowerCase() === "p") { pop(); resolve("resume"); } });
+    s.dataset.screen = "pause";
     mount(s);
   });
 }
@@ -481,22 +486,21 @@ export function resultsScreen(run: RunState, won: boolean, unlocks: Unlocks, cod
     const s = el("div", "scr dim");
     const p = el("div", "panel results");
     const endless = run.mode === "endless";
-    const title = endless ? `Depth ${run.endlessDepth}` : won ? "The Original Falls" : "The Line Breaks";
-    const kick = endless ? "The road ends here" : won ? "Victory" : `Fallen in Act ${ROMAN[Math.min(3, run.act)]}`;
+    const title = `×${run.stats.longestChain}`;
+    const kick = endless ? `∞ ${run.endlessDepth}` : won ? "Whole" : `Fallen · ${ROMAN[Math.min(3, run.act)]}`;
     const st = run.stats;
     const mins = Math.floor(st.timeMs / 60000), secs = Math.floor((st.timeMs % 60000) / 1000);
-    p.innerHTML = `<div class="kicker" style="text-align:center">${kick}</div><div class="h1">${title}</div>
+    p.innerHTML = `<div class="kicker" style="text-align:center">${kick}</div><div class="h1 bigtitle">${title}</div>
       <div class="grid">
-        <div class="stat"><div class="v">×${st.longestChain}</div><div class="l">Longest chain</div></div>
-        <div class="stat"><div class="v">${st.fightsWon}</div><div class="l">Fights won</div></div>
+        <div class="stat"><div class="v">${st.fightsWon}</div><div class="l">Fights</div></div>
         <div class="stat"><div class="v">${st.kills}</div><div class="l">Kills</div></div>
         <div class="stat"><div class="v">${st.parries}</div><div class="l">Parries</div></div>
         <div class="stat"><div class="v">${st.crits}</div><div class="l">Crits</div></div>
-        <div class="stat"><div class="v">${mins}:${String(secs).padStart(2, "0")}</div><div class="l">Battle time</div></div>
+        <div class="stat"><div class="v">${mins}:${String(secs).padStart(2, "0")}</div><div class="l">Time</div></div>
       </div>`;
     const dmg = Object.entries(st.techDamage).filter(([k]) => TECH[k]).sort((a, b) => b[1] - a[1]).slice(0, 6);
     if (dmg.length) {
-      p.appendChild(frag(`<div class="sect">Damage by echo</div>`));
+      p.appendChild(frag(`<div class="sect">Echoes</div>`));
       const max = dmg[0]![1];
       for (const [k, v] of dmg) {
         p.appendChild(frag(`<div class="dmgrow ${famClass(k)}"><div class="g">${techIcon(k)}</div><div>${TECH[k]!.name}</div><div><div class="b" style="width:${(v / max) * 100}%"></div></div><div class="n">${Math.round(v).toLocaleString()}</div></div>`));
@@ -507,25 +511,26 @@ export function resultsScreen(run: RunState, won: boolean, unlocks: Unlocks, cod
       const ug = el("div", "unlocks");
       p.appendChild(ug);
       const add = (h: string) => ug.appendChild(frag(h));
-      for (const t of unlocks.techs) add(`<div class="unlock ${famClass(t)}"><div class="g">${techIcon(t)}</div><div><b>${TECH[t]!.name}</b><br><span>${TECH[t]!.desc}</span></div></div>`);
-      for (const f of unlocks.forms) add(`<div class="unlock"><div class="g">◆</div><div><b>Form · ${FORMS[f].name}</b><br><span>${FORMS[f].desc}</span></div></div>`);
-      if (unlocks.endless) add(`<div class="unlock"><div class="g">∞</div><div><b>Endless Road</b><br><span>March until the line breaks.</span></div></div>`);
-      if (unlocks.ascension) add(`<div class="unlock"><div class="g">▲</div><div><b>Ascension ${unlocks.ascension}</b><br><span>${ASCENSIONS[unlocks.ascension - 1]?.desc ?? ""}</span></div></div>`);
+      for (const t of unlocks.techs) add(`<div class="unlock ${famClass(t)}"><div class="g">${techIcon(t)}</div><div><b>${TECH[t]!.name}</b></div></div>`);
+      for (const f of unlocks.forms) add(`<div class="unlock"><div class="g">◆</div><div><b>Form · ${FORMS[f].name}</b></div></div>`);
+      if (unlocks.endless) add(`<div class="unlock"><div class="g">∞</div><div><b>Endless</b></div></div>`);
+      if (unlocks.ascension) add(`<div class="unlock"><div class="g">▲</div><div><b>Ascension ${unlocks.ascension}</b></div></div>`);
       window.setTimeout(() => audio.ui("unlock"), 500);
     }
     if (codexNew.length) {
-      p.appendChild(frag(`<div class="sect">New chains in the Codex</div>`));
+      p.appendChild(frag(`<div class="sect">Codex</div>`));
       for (const c of codexNew.slice(0, 4)) p.appendChild(chainRow(c));
     }
     p.appendChild(frag(`<div class="sub" style="margin:14px auto 0;font-size:13px">Seed ${run.seed} · ${FORMS[run.form].name}${run.ascension ? ` · Ascension ${run.ascension}` : ""}</div>`));
     const row = el("div", "row");
     row.style.marginTop = "16px";
-    const again = btn("March Again", "btn primary", () => { pop(); resolve("again"); });
+    const again = btn("Again", "btn primary", () => { pop(); resolve("again"); });
     again.dataset.autofocus = "";
     row.append(btn("Title", "btn ghost", () => { pop(); resolve("title"); }, "back"), again);
     p.appendChild(row);
     s.appendChild(p);
     const pop = keys((e) => { if (e.key === "Enter") { pop(); resolve("again"); } });
+    s.dataset.screen = "results";
     mount(s);
   });
 }
@@ -541,17 +546,17 @@ export function codexScreen(p: Profile): Promise<void> {
   return new Promise((resolve) => {
     const s = el("div", "scr dim");
     const box = el("div", "panel codex");
-    box.innerHTML = `<div class="kicker" style="text-align:center">Codex</div><div class="h1">Every Line Remembered</div>`;
+    box.innerHTML = `<div class="kicker" style="text-align:center">Codex</div>`;
     const tabs = el("div", "tabs seg-ctl");
     tabs.style.alignSelf = "center";
-    tabs.innerHTML = `<button data-t="chains" class="on">Chains</button><button data-t="techs">Techniques</button>`;
+    tabs.innerHTML = `<button data-t="chains" class="on">Chains</button><button data-t="techs">Echoes</button>`;
     const body = el("div", "body");
     box.append(tabs, body);
     const show = (t: string) => {
       tabs.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
       body.innerHTML = "";
       if (t === "chains") {
-        if (!p.codex.length) body.appendChild(frag(`<div class="sub" style="margin:30px auto">Chains of 4+ links are written here. Build one.</div>`));
+        if (!p.codex.length) body.appendChild(frag(`<div class="sub" style="margin:30px auto">×4</div>`));
         for (const c of p.codex.slice(0, 80)) body.appendChild(chainRow(c));
       } else {
         const g = el("div", "techgrid");
@@ -573,6 +578,7 @@ export function codexScreen(p: Profile): Promise<void> {
     box.appendChild(row);
     s.appendChild(box);
     const pop = keys((e) => { if (e.key === "Escape") { pop(); resolve(); } });
+    s.dataset.screen = "codex";
     mount(s);
   });
 }
@@ -582,7 +588,7 @@ export function settingsScreen(p: Profile, onChange: () => void): Promise<void> 
   return new Promise((resolve) => {
     const s = el("div", "scr dim");
     const box = el("div", "panel settings");
-    box.innerHTML = `<div class="kicker" style="text-align:center">Settings</div><div class="h1">Tuning</div>`;
+    box.innerHTML = `<div class="kicker" style="text-align:center">Settings</div>`;
     const st = p.settings;
     const slider = (label: string, key: "master" | "music" | "sfx") => {
       const r = el("div", "setrow");
@@ -603,8 +609,13 @@ export function settingsScreen(p: Profile, onChange: () => void): Promise<void> 
     const syncSp = () => speed.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.s) === st.speed));
     speed.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.addEventListener("click", () => { st.speed = Number(b.dataset.s) as 1 | 2; syncSp(); audio.ui("tick"); onChange(); }));
     syncSp();
-    box.append(slider("Master volume", "master"), slider("Music", "music"), slider("Effects", "sfx"), speed, toggle("Damage numbers", "numbers"), toggle("Reduce flashing", "reducedFlash"), toggle("Reduce screen shake", "reducedShake"));
-    const keysHelp = frag(`<div class="sub" style="font-size:13px;margin:16px auto 0;text-align:left;line-height:1.7">SPACE / tap portrait — Sync Break · TAB — speed · ESC — pause · F — formation (map) · 1-3 — pick cards</div>`);
+    const attire = el("div", "setrow");
+    attire.innerHTML = `<label>Attire</label><div class="seg-ctl"><button data-o="coat">Coat</button><button data-o="cloak">Cloak</button><button data-o="scarf">Scarf</button></div>`;
+    const syncAt = () => attire.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.o === st.outfit));
+    attire.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.addEventListener("click", () => { st.outfit = b.dataset.o as typeof st.outfit; syncAt(); audio.ui("tick"); onChange(); }));
+    syncAt();
+    box.append(attire, slider("Master volume", "master"), slider("Music", "music"), slider("Effects", "sfx"), speed, toggle("Damage numbers", "numbers"), toggle("Reduce flashing", "reducedFlash"), toggle("Reduce screen shake", "reducedShake"));
+    const keysHelp = frag(`<div class="sub" style="font-size:13px;margin:16px auto 0;text-align:left;line-height:1.7">SPACE Resound · TAB Speed · ESC Pause · F Formation · 1–3 Pick</div>`);
     box.appendChild(keysHelp);
     const row = el("div", "row");
     row.style.marginTop = "16px";
@@ -614,6 +625,7 @@ export function settingsScreen(p: Profile, onChange: () => void): Promise<void> 
     box.appendChild(row);
     s.appendChild(box);
     const pop = keys((e) => { if (e.key === "Escape") { pop(); resolve(); } });
+    s.dataset.screen = "settings";
     mount(s);
   });
 }

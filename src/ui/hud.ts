@@ -34,7 +34,7 @@ export class Hud {
     this.root.innerHTML = "";
     this.root.hidden = false;
     const tl = el("div", "tl");
-    tl.innerHTML = `<div class="portrait" title="Sync Break (Space)"><svg viewBox="0 0 66 66"><defs><linearGradient id="syncgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc94a"/><stop offset=".5" stop-color="#ff3b4e"/><stop offset="1" stop-color="#3ff0ff"/></linearGradient></defs><circle class="ringbg" cx="33" cy="33" r="29" fill="none" stroke-width="3"/><circle class="ring" cx="33" cy="33" r="29" fill="none" stroke-width="3" stroke-linecap="round" stroke-dasharray="${RING}" stroke-dashoffset="${RING}"/></svg><canvas></canvas></div>
+    tl.innerHTML = `<div class="portrait" title="Resound"><svg viewBox="0 0 66 66"><defs><linearGradient id="syncgrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc94a"/><stop offset=".5" stop-color="#ff3b4e"/><stop offset="1" stop-color="#3ff0ff"/></linearGradient></defs><circle class="ringbg" cx="33" cy="33" r="29" fill="none" stroke-width="3"/><circle class="ring" cx="33" cy="33" r="29" fill="none" stroke-width="3" stroke-linecap="round" stroke-dasharray="${RING}" stroke-dashoffset="${RING}"/></svg><canvas></canvas></div>
       <div class="hp"><div class="nums"></div><div class="bar"><u></u><i></i></div><div class="seals">${run.seals.map((s) => `<span title="${SEAL[s]?.name}: ${SEAL[s]?.desc}">${SEAL[s]?.glyph}</span>`).join("")}</div></div>`;
     this.portraitEl = tl.querySelector(".portrait")!;
     portrait(tl.querySelector("canvas")!, run.form, 48, 48, 0.46);
@@ -53,7 +53,7 @@ export class Hud {
     pause.addEventListener("click", () => { pause.blur(); cb.pause(); });
     tr.append(this.speedBtn, pause);
     this.setSpeed(speed);
-    this.syncBtn = el("button", "syncbtn", `Sync Break<span class="k">SPACE</span>`) as HTMLButtonElement;
+    this.syncBtn = el("button", "syncbtn", `Resound<span class="k">SPACE</span>`) as HTMLButtonElement;
     this.syncBtn.hidden = true;
     this.syncBtn.addEventListener("click", () => { this.syncBtn.blur(); cb.sync(); });
     const trail = el("div", "hud-trail");
@@ -64,7 +64,7 @@ export class Hud {
     if (w.boss) {
       const def = BOSSES[w.boss.id];
       const bb = el("div", `bossbar ${w.boss.id}`);
-      bb.innerHTML = `<div class="bn">${def.name}</div><div class="bb"><i style="width:100%"></i>${def.phaseAt.map((p) => `<em style="left:${p * 100}%"></em>`).join("")}</div><div class="rule">${w.boss.id === "original" ? "Only chains of 3+ links break its guard" : "It marches your trail — reversed"}</div>`;
+      bb.innerHTML = `<div class="bn">${def.name}</div><div class="bb"><i style="width:100%"></i>${def.phaseAt.map((p) => `<em style="left:${p * 100}%"></em>`).join("")}</div>`;
       this.bossI = bb.querySelector(".bb > i");
       this.bossbar = bb;
       this.root.appendChild(bb);
@@ -120,8 +120,8 @@ export class Hud {
     this.tut?.remove();
     const t = el("div", "tut");
     t.innerHTML = kind === "link"
-      ? `<div class="t1">Echoes follow you</div><div class="t2">Each one reacts to the echo directly ahead of it.</div>`
-      : `<div class="t1">Sync Break ready</div><div class="t2">Press Space or tap your portrait — every echo strikes at once.</div>`;
+      ? ``
+      : `<div class="t1">Resound</div><div class="t2">SPACE</div>`;
     this.root.appendChild(t);
     this.tut = t;
     window.setTimeout(() => { t.style.transition = "opacity .6s"; t.style.opacity = "0"; window.setTimeout(() => t.remove(), 700); }, kind === "link" ? 3200 : 3800);

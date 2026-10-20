@@ -23,8 +23,8 @@ export const ENEMIES: Record<EnemyKind, EnemyDef> = {
   splitter: { kind: "splitter", name: "Splitter", hp: 44, dmg: 5, speed: 32, range: 42, attackEvery: 1.8, windup: 0.5, size: 1.15, splitInto: "splitling" },
   splitling: { kind: "splitling", name: "Splitling", hp: 14, dmg: 3, speed: 52, range: 36, attackEvery: 1.3, windup: 0.35, size: 0.68 },
   mimic: { kind: "mimic", name: "Mimic", hp: 64, dmg: 6, speed: 30, range: 46, attackEvery: 1.9, windup: 0.5, size: 1.1, mimic: true },
-  duplicate: { kind: "duplicate", name: "The Duplicate", hp: 1500, dmg: 5, speed: 30, range: 70, attackEvery: 1.1, windup: 0.3, size: 1.25 },
-  original: { kind: "original", name: "The Original", hp: 2700, dmg: 7, speed: 26, range: 70, attackEvery: 1.3, windup: 0.3, size: 1.25 },
+  duplicate: { kind: "duplicate", name: "Who He Was", hp: 1500, dmg: 5, speed: 30, range: 70, attackEvery: 1.1, windup: 0.3, size: 1.25 },
+  original: { kind: "original", name: "Who He Was Made To Be", hp: 2700, dmg: 7, speed: 26, range: 70, attackEvery: 1.3, windup: 0.3, size: 1.25 },
 };
 
 export const ELITE = { hpMult: 1.8, traits: ["armored", "hasted", "splitting"] as EliteTrait[] };

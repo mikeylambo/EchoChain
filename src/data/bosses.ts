@@ -13,7 +13,7 @@ export interface BossDef {
 export const BOSSES: Record<"duplicate" | "original", BossDef> = {
   duplicate: {
     id: "duplicate",
-    name: "The Duplicate",
+    name: "Who He Was",
     phaseAt: [0.5],
     escorts: [
       { at: 10, kind: "husk", count: 3 },
@@ -26,7 +26,7 @@ export const BOSSES: Record<"duplicate" | "original", BossDef> = {
   },
   original: {
     id: "original",
-    name: "The Original",
+    name: "Who He Was Made To Be",
     phaseAt: [0.5, 0.2],
     escorts: [{ at: 14, kind: "husk", count: 3 }, { at: 34, kind: "splitter", count: 2 }],
     ghostDmg: 3,
@@ -46,10 +46,10 @@ export const ASCENSIONS: AscensionDef[] = [
   { level: 2, desc: "Lancers throw faster" },
   { level: 3, desc: "Passive healing between fights halved" },
   { level: 4, desc: "Enemies move 15% faster" },
-  { level: 5, desc: "The Duplicate reorders from the start" },
+  { level: 5, desc: "Who He Was turns from the start" },
   { level: 6, desc: "Mimics join every fight from Act 2" },
-  { level: 7, desc: "Sync Break charges 20% slower" },
+  { level: 7, desc: "Resound charges 20% slower" },
   { level: 8, desc: "Enemies +20% HP" },
   { level: 9, desc: "Enemies hit 20% harder" },
-  { level: 10, desc: "The Original's final phase begins at 35%" },
+  { level: 10, desc: "The final phase begins at 35%" },
 ];

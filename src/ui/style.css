@@ -383,3 +383,26 @@ svg.ti { width: 100%; height: 100%; }
 .fam-momentum { --fam: var(--crimson); --famrgb: 255, 59, 78; }
 .fam-resonance { --fam: var(--cyan); --famrgb: 63, 240, 255; }
 .fam-ink { --fam: var(--bone); --famrgb: 239, 233, 220; }
+
+/* ───────── v2 copy pass: icons are the rules */
+.card { min-height: 0; width: 210px; padding: 18px 16px 14px; gap: 12px; }
+.card .glyph { width: 56px; height: 56px; }
+.card .name { font-size: 14px; }
+.card .flow { padding: 8px 12px; }
+.card .flow svg.ev { width: 20px; height: 20px; }
+.cardfoot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.chip-stat { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.08em; color: var(--fam, var(--bone)); padding: 4px 10px; border-radius: 6px; background: rgba(var(--famrgb, 239,233,220), 0.12); border: 1px solid rgba(var(--famrgb, 239,233,220), 0.3); width: fit-content; }
+.linkdot { width: 22px; height: 6px; border-radius: 3px; background: rgba(239,233,220,0.15); }
+.linkdot.on { background: var(--fam); box-shadow: 0 0 12px var(--fam); }
+.card .desc { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 8px); font-size: 14px; color: var(--bone2); text-align: center; line-height: 1.35; }
+.card .desc b { color: var(--fam); font-family: var(--display); font-size: 11px; }
+.card:hover .desc, .card:focus-visible .desc { display: block; }
+.card.seal .chip-stat { font-family: var(--body); font-weight: 600; font-size: 15px; letter-spacing: 0; }
+.cards { margin: 18px 0 44px; }
+.bigchain { font-family: var(--display); font-weight: 700; font-size: 34px; color: var(--bone); text-shadow: 0 0 24px rgba(180,160,255,0.6); }
+.bigtitle { font-size: clamp(56px, 9vw, 96px) !important; text-shadow: 0 0 40px rgba(180,160,255,0.55); }
+.form-card { width: 190px; }
+.node-info b { margin: 0; }
+:root { --bone: #ece8ff; --bone2: rgba(236,232,255,0.6); --bone3: rgba(236,232,255,0.3); --line: rgba(200,190,255,0.16); --panel: rgba(8,7,18,0.88); }
+.scr.dim { background: radial-gradient(ellipse at 50% 40%, rgba(4,3,14,0.5), rgba(4,3,14,0.86)); }
+@media (max-width: 760px) { .card { width: min(100%, 360px); } .card .desc { position: static; display: block; text-align: left; font-size: 13px; } }

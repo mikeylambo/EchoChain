@@ -6,11 +6,46 @@ import { slotDelayTicks } from "../sim/trail";
 import type { Enemy, Family, Fx as SimFx } from "../sim/types";
 import type { World } from "../sim/world";
 import { Scene } from "./background";
-import { drawEnemyShape, enemyHeight, eyeOut, SLATE, SLATE_RIM } from "./enemyArt";
-import { drawInkFigure, drawSilhouette, rigFor, type ExtraPose, type FigureLook } from "./figure";
+import { drawEnemyShape, enemyHeight, eyeOut, SLATE_RIM } from "./enemyArt";
+import { drawInkFigure, drawSilhouette, headOf, rigFor, TECH_PROP, type ExtraPose, type FigureLook, type Outfit } from "./figure";
 import { drawGlow, FAM_RGB, Fx, glowSprite } from "./fx";
 
 const FIG = 1.12; // figure scale in world units
+const VOID = "#06050c";
+const VOID_RIM = "rgba(140,120,240,0.75)";
+
+/** Family nebula textures: echoes are made of starlight in their family's colour. */
+const texCache = new Map<string, HTMLCanvasElement>();
+function famTex(rgb: string): HTMLCanvasElement {
+  let c = texCache.get(rgb);
+  if (c) return c;
+  c = document.createElement("canvas");
+  c.width = 680;
+  c.height = 560;
+  const g = c.getContext("2d")!;
+  const [r, gg, b] = rgb.split(",").map(Number) as [number, number, number];
+  g.fillStyle = `rgb(${r * 0.1 | 0},${gg * 0.1 | 0},${b * 0.14 | 0})`;
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalCompositeOperation = "lighter";
+  let seed = r * 7 + gg * 13 + b;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const tints = [rgb, `${r * 0.55 | 0},${gg * 0.55 | 0},${b * 0.7 | 0}`, `${(r * 0.5 + 60) | 0},${(gg * 0.3 + 20) | 0},${(b * 0.6 + 90) | 0}`];
+  for (let i = 0; i < 26; i++) {
+    const x = rnd() * c.width, y = rnd() * c.height, rad = 40 + rnd() * 220;
+    const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, `rgba(${tints[i % 3]},${0.22 + rnd() * 0.3})`);
+    gr.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = gr;
+    g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  for (let i = 0; i < 1400; i++) {
+    const s = rnd() ** 5 * 3.2 + 0.7;
+    g.fillStyle = `rgba(255,255,255,${0.55 + rnd() * 0.45})`;
+    g.fillRect(rnd() * c.width, rnd() * c.height, s, s);
+  }
+  texCache.set(rgb, c);
+  return c;
+}
 const SCR_W = 300, SCR_H = 240, SCR_OX = 150, SCR_OY = 190;
 
 export interface ViewHooks {
@@ -61,6 +96,8 @@ export class FightView {
   speed = 1;
   paused = false;
   attract = false;
+  /** Hero attire (settings). */
+  outfit: Outfit = "coat";
   tutorial = false;
   /** Sync command ticks issued this fight (for the run's choice log). */
   syncTicks: number[] = [];
@@ -96,6 +133,11 @@ export class FightView {
   /** Adaptive quality: afterimages and ambient particles drop out if frames get expensive. */
   private costEma = 0;
   lowQuality = false;
+  /** dev/capture: never drop quality */
+  lockQuality = false;
+  /** Opening fall: he kneels in the dark, the screen inverts, the first echo rises. */
+  introT = 0;
+  private echoMul = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -127,7 +169,7 @@ export class FightView {
     this.canvas.width = Math.round(this.W * this.S);
     this.canvas.height = Math.round(this.H * this.S);
     this.groundY = this.H - (aspect >= 1.5 ? 190 : aspect >= 1 ? Math.min(240, this.H * 0.28) : 130);
-    this.zoom = aspect >= 1.5 ? 1.3 : aspect >= 1 ? 1.12 : 1.32;
+    this.zoom = aspect >= 1.5 ? 1.5 : aspect >= 1 ? 1.28 : 1.45;
     this.SS = Math.min(2, this.S * this.zoom);
     this.scratch.width = Math.ceil(SCR_W * this.SS);
     this.scratch.height = Math.ceil(SCR_H * this.SS);
@@ -136,7 +178,9 @@ export class FightView {
 
   setWorld(w: World, act: number): void {
     this.world = w;
-    this.scene = new Scene(act);
+    let h = 0;
+    for (const ch of String(w.cfg.seed)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    this.scene = new Scene(act, h % 997);
     this.techs = w.cfg.trail.map((s) => s.tech);
     this.families = ["ink", ...this.techs.map((t) => TECH[t]?.family ?? "precision")];
     this.slotFlash = new Array(this.families.length + 4).fill(0);
@@ -152,6 +196,7 @@ export class FightView {
     this.syncFreeze = 0;
     this.slowmo = 1;
     this.syncTicks = [];
+    this.introT = 0;
     this.chainShow = { n: 0, t: 9, rgb: FAM_RGB.bone! };
     this.bannerT = 9;
     this.lastBig = -1;
@@ -188,7 +233,16 @@ export class FightView {
         if (this.slowmoT <= 0) this.slowmo = 1;
       }
       if (w.outcome === "lost") this.slowmo = 0.3;
-      if (this.syncFreeze > 0) {
+      if (this.introT > 0) {
+        const prev = this.introT;
+        this.introT -= realDt;
+        if (prev > 0.9 && this.introT <= 0.9) {
+          this.flash = this.settings.reducedFlash ? 0.2 : 0.7;
+          this.invertT = this.settings.reducedFlash ? 0 : 0.14;
+          this.shake(0.5);
+          audio.syncBurst();
+        }
+      } else if (this.syncFreeze > 0) {
         this.syncFreeze -= realDt;
         this.syncGlow = Math.min(1, this.syncGlow + realDt * 4);
         if (this.syncFreeze <= 0) {
@@ -232,7 +286,8 @@ export class FightView {
     this.render();
     const cost = performance.now() - t0;
     this.costEma = this.costEma * 0.95 + cost * 0.05;
-    if (!this.lowQuality && this.costEma > 11) this.lowQuality = true;
+    if (this.lockQuality) this.lowQuality = false;
+    else if (!this.lowQuality && this.costEma > 11) this.lowQuality = true;
     else if (this.lowQuality && this.costEma < 5) this.lowQuality = false;
   }
 
@@ -248,7 +303,7 @@ export class FightView {
 
   // ───── sim → presentation
   private laneY(lane: number): number {
-    return this.groundY + (lane - 0.5) * 58;
+    return this.groundY + (lane - 0.5) * 16;
   }
 
   private slotX(j: number): number {
@@ -389,7 +444,7 @@ export class FightView {
         this.invertT = this.settings.reducedFlash ? 0 : 0.1;
         this.shake(0.7);
         this.chainShow = { n: f.slots, t: 0, rgb: "255,255,255" };
-        this.fx.add({ k: "text", x: w.fighter.x + 170, y: this.groundY - 250, text: "SYNC BREAK", size: 30, rgb: "255,255,255", max: 1.1, add: false });
+        this.fx.add({ k: "text", x: w.fighter.x + 170, y: this.groundY - 250, text: "RESOUND", size: 34, rgb: "255,255,255", max: 1.1, add: false });
         for (let j = 0; j <= f.slots; j++) this.slotFlash[j] = 1;
         if (sfx) audio.syncBurst();
         break;
@@ -416,7 +471,7 @@ export class FightView {
         this.fx.add({ k: "glint", x: f.x, y: this.groundY - 40, size: f.r * 0.6, rgb: FAM_RGB[f.family]!, max: 0.3 });
         break;
       case "boss": {
-        const t = f.text === "phase" ? "PHASE SHIFT" : f.text === "stagger" ? "STAGGERED" : "THE LINE TURNS";
+        const t = f.text === "phase" ? "SHIFT" : f.text === "stagger" ? "BROKEN" : "TURNED";
         this.banner(t);
         if (sfx) audio.boss(f.text);
         this.shake(f.text === "stagger" ? 0.4 : 0.25);
@@ -468,7 +523,7 @@ export class FightView {
       return;
     }
     const viewW = this.W / this.zoom;
-    const targetCam = w.fighter.x - viewW * (viewW > 1200 ? 0.4 : viewW < 700 ? 0.5 : 0.34);
+    const targetCam = w.fighter.x - viewW * (viewW > 1100 ? 0.42 : viewW < 650 ? 0.52 : 0.38);
     this.camX += (targetCam - this.camX) * 0.12;
     const tr = this.trauma * this.trauma;
     const sx = (Math.sin(this.time * 61) + Math.sin(this.time * 37)) * 9 * tr;
@@ -477,6 +532,8 @@ export class FightView {
     ctx.translate(sx, sy);
     const camX = this.camX;
 
+    const want = this.chainShow.t < 1.1 ? Math.min(1, this.chainShow.n / 7) : 0;
+    this.scene.energy += (want - this.scene.energy) * 0.04;
     this.scene.draw(ctx, camX * this.zoom, this.W, this.H, this.groundY, this.time);
 
     if (this.syncGlow > 0) {
@@ -559,6 +616,7 @@ export class FightView {
     if (this.syncGlow > 0) this.drawSyncRays(w, camX);
 
     ctx.restore();
+    this.reflect(camX);
     ctx.restore();
 
     // vignette + hurt
@@ -594,8 +652,22 @@ export class FightView {
     this.drawBanner();
   }
 
+  /** Mirror floor: the world above the horizon, flipped and faded, then the floor glaze. */
+  private reflect(camX: number): void {
+    const c = this.ctx;
+    const gyPx = Math.round(this.groundY * this.S);
+    const hPx = Math.min(gyPx, Math.round(320 * this.S));
+    const below = this.canvas.height - gyPx;
+    c.save();
+    c.setTransform(1, 0, 0, -1, 0, gyPx * 2 + Math.round(2 * this.S));
+    c.globalAlpha = 0.2;
+    c.drawImage(this.canvas, 0, gyPx - Math.min(hPx, below), this.canvas.width, Math.min(hPx, below), 0, gyPx - Math.min(hPx, below), this.canvas.width, Math.min(hPx, below));
+    c.restore();
+    this.scene.drawFloor(c, camX * this.zoom, this.W, this.H, this.groundY, this.time);
+  }
+
   /** Draw a figure tinted into scratch, then composite. */
-  private blitFigure(rig: ReturnType<typeof rigFor>, look: FigureLook, color: string, x: number, y: number, alpha: number, mode: GlobalCompositeOperation, scale: number, flip: boolean): void {
+  private blitFigure(rig: ReturnType<typeof rigFor>, look: FigureLook, color: string, x: number, y: number, alpha: number, mode: GlobalCompositeOperation, scale: number, flip: boolean, tex?: HTMLCanvasElement, edge = 0): void {
     if (alpha <= 0.01) return;
     const s = this.sctx;
     s.setTransform(1, 0, 0, 1, 0, 0);
@@ -606,9 +678,22 @@ export class FightView {
     s.fillStyle = color;
     s.strokeStyle = color;
     drawSilhouette(s, rig, look);
+    if (edge) {
+      // keep only a thin leading rim
+      s.globalCompositeOperation = "destination-out";
+      s.translate(edge, edge * 0.8);
+      drawSilhouette(s, rig, { ...look, smearColor: undefined });
+      s.globalCompositeOperation = "source-over";
+    }
+    if (tex) {
+      s.setTransform(1, 0, 0, 1, 0, 0);
+      s.globalCompositeOperation = "source-in";
+      s.drawImage(tex, -((this.time * 14) % 60) - 10, -10);
+      s.globalCompositeOperation = "source-over";
+    }
     const ctx = this.ctx;
     ctx.globalCompositeOperation = mode;
-    ctx.globalAlpha = Math.min(1, alpha);
+    ctx.globalAlpha = Math.min(1, alpha * this.echoMul);
     ctx.drawImage(this.scratch, x - SCR_OX, y - SCR_OY, SCR_W, SCR_H);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
@@ -629,7 +714,8 @@ export class FightView {
       drawGlow(ctx, x, this.groundY - 30, 34, rgb, 0.25 + this.slotFlash[j]! * 0.4);
       this.blitFigure(rig, { form: w.form.id, time: this.time - j * 0.1, speed: 60 }, `rgb(${rgb})`, x, this.groundY, 0.45 + this.slotFlash[j]! * 0.4, "lighter", FIG * 0.68, false);
     }
-    for (let j = n; j >= 1; j--) {
+    this.echoMul = this.introT > 0.9 ? 0 : this.introT > 0 ? 1 - this.introT / 0.9 : 1;
+    for (let j = n; j >= 1 && this.echoMul > 0; j--) {
       const tech = this.techs[j - 1]!;
       const rgb = this.rgbOf(j);
       const delay = slotDelayTicks(j, delayMult);
@@ -642,37 +728,97 @@ export class FightView {
       const y = this.slotY(j);
       const fl = this.slotFlash[j]!;
       const inverse = tech === "inverse";
-      // afterimages
+      const tex = famTex(rgb);
+      const look: FigureLook = { form: w.form.id, time: this.time - j * 0.12, speed: 70, smearColor: `rgb(${rgb})`, outfit: "none", prop: TECH_PROP[tech] };
+      // afterimages while moving
       if (!inverse && !this.lowQuality) {
         for (let k = 2; k >= 1; k--) {
           const s2 = w.history.sample(delay + k * 4);
-          const ax = this.slotX(j) - camX - (smp.x - s2.x) - k * (useOv ? 6 : 0);
-          if (Math.abs(ax - x) < 1.5 && !useOv) continue;
-          this.blitFigure(rigFor(s2.pose, s2.poseT), { form: w.form.id, time: this.time - j * 0.12 - k * 0.05, speed: 70 }, `rgb(${rgb})`, ax, y, 0.2 / k, "lighter", FIG, false);
+          const ax = this.slotX(j) - camX - (smp.x - s2.x);
+          if (Math.abs(ax - x) < 1.5) continue;
+          this.blitFigure(rigFor(s2.pose, s2.poseT), { ...look, smearColor: undefined, time: this.time - j * 0.12 - k * 0.05 }, `rgb(${rgb})`, ax, y, 0.18 / k, "lighter", FIG, false, tex);
         }
       }
-      drawGlow(ctx, x + 4, y - 46, 58 + fl * 30, rgb, 0.16 + fl * 0.5 + this.syncGlow * 0.4);
+      // brush smear while striking
+      if (useOv && !inverse) {
+        const fade = 1 - ov.t / 0.38;
+        for (let k = 4; k >= 1; k--) {
+          this.blitFigure(rigFor(pose, Math.max(0, pt - k * 0.035)), { ...look, smearColor: undefined }, `rgb(${rgb})`, x - k * 8, y, (0.28 - k * 0.055) * fade, "lighter", FIG, false);
+        }
+      }
+      drawGlow(ctx, x + 4, y - 50, 64 + fl * 30, rgb, 0.22 + fl * 0.5 + this.syncGlow * 0.4);
       const rig = rigFor(pose, pt);
-      const look: FigureLook = { form: w.form.id, time: this.time - j * 0.12, speed: 70, smearColor: `rgb(${rgb})` };
       if (inverse) {
         this.blitFigure(rig, look, "#ffffff", x, y, 0.85 + fl * 0.15, "difference", FIG, false);
         drawGlow(ctx, x, y - 46, 40, rgb, 0.2 + fl * 0.4);
       } else {
-        this.blitFigure(rig, look, `rgb(${rgb})`, x, y, 0.62 + fl * 0.38 + this.syncGlow * 0.3, "lighter", FIG * (1 + fl * 0.05), false);
-        if (fl > 0.2) this.blitFigure(rig, { ...look, smearColor: undefined }, "#ffffff", x, y, (fl - 0.2) * 0.5, "lighter", FIG, false);
+        if (!this.lowQuality) {
+          // soft halo + bright leading rim so the starlight body has an edge
+          this.blitFigure(rig, { ...look, smearColor: undefined }, `rgb(${rgb})`, x, y, 0.16, "lighter", FIG * 1.05, false);
+        }
+        this.blitFigure(rig, look, `rgb(${rgb})`, x, y, 0.9 + fl * 0.1 + this.syncGlow * 0.2, "lighter", FIG * (1 + fl * 0.05), false, tex);
+        this.blitFigure(rig, { ...look, smearColor: undefined }, "#ffffff", x, y, 0.55 + fl * 0.4, "lighter", FIG * (1 + fl * 0.05), false, undefined, 1.8);
+        if (fl > 0.2) this.blitFigure(rig, { ...look, smearColor: undefined }, "#ffffff", x, y, (fl - 0.2) * 0.45, "lighter", FIG, false);
       }
+      // stardust
+      if (!this.paused && Math.random() < (this.lowQuality ? 0.35 : 0.9) + fl) {
+        this.fx.add({ k: "mote", x: this.slotX(j) + (Math.random() - 0.5) * 30, y: y - 10 - Math.random() * 95, vx: -25 - Math.random() * 60, vy: -6 - Math.random() * 18, max: 0.6 + Math.random() * 0.9, size: 0.8 + Math.random() * 1.6, rgb });
+      }
+      // eyes
+      const [hx, hy] = headOf(rig);
+      drawGlow(ctx, x + (hx + 3) * FIG, y + (hy - 1) * FIG, 10 + fl * 10, rgb, 0.7 + fl * 0.3);
     }
+    this.echoMul = 1;
     // the fighter
     const f = w.fighter;
     const fx = f.x - camX;
-    const pose = this.syncGlow > 0 && this.syncFreeze > 0 ? "parry" : f.pose;
-    const rig = rigFor(pose, f.poseT);
+    const kneel = this.introT > 0.9;
+    const pose = kneel ? "heavy" : this.syncGlow > 0 && this.syncFreeze > 0 ? "parry" : f.pose;
+    const rig = rigFor(pose, kneel ? 0.22 : f.poseT);
+    const hurt = f.hurtT > 0.15;
+    const hlook: FigureLook = { form: w.form.id, time: this.time, speed: f.pose === "walk" ? 70 : 10, outfit: this.outfit };
     ctx.save();
     ctx.translate(fx, this.groundY);
     ctx.scale(FIG, FIG);
-    const hurt = f.hurtT > 0.15;
-    drawInkFigure(ctx, rig, { form: w.form.id, time: this.time, speed: f.pose === "walk" ? 70 : 10, smearColor: "rgba(239,233,220,0.95)" }, hurt ? "#3a0a12" : "#07070a", hurt ? "#ff3b4e" : "#efe9dc");
+    // brushed edge: a few jittered dark passes
+    ctx.fillStyle = ctx.strokeStyle = "#000";
+    for (let k = 0; k < 3; k++) {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.translate(-1.5 - k * 1.6 + Math.sin(this.time * 23 + k * 3) * 0.8, Math.cos(this.time * 19 + k) * 0.8);
+      drawSilhouette(ctx, rig, hlook);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = ctx.strokeStyle = hurt ? "#ff3b4e" : "#b9b0ff";
+    ctx.translate(-1.1, -1.3);
+    drawSilhouette(ctx, rig, hlook);
     ctx.restore();
+    ctx.fillStyle = ctx.strokeStyle = hurt ? "#2a0610" : "#05040a";
+    drawSilhouette(ctx, rig, { ...hlook, smearColor: "rgba(210,200,255,0.9)" });
+    ctx.restore();
+    // eye slit + horizontal flare
+    {
+      const [hx, hy] = headOf(rig);
+      const ex = fx + (hx + 3.5) * FIG, ey = this.groundY + (hy - 1) * FIG;
+      const fw = 120 + this.syncGlow * 200;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const lg = ctx.createLinearGradient(ex - fw, 0, ex + fw, 0);
+      lg.addColorStop(0, "rgba(200,180,255,0)");
+      lg.addColorStop(0.5, "rgba(210,195,255,1)");
+      lg.addColorStop(1, "rgba(200,180,255,0)");
+      ctx.globalAlpha = 0.45 + 0.25 * Math.sin(this.time * 2.6) ** 2;
+      ctx.fillStyle = lg;
+      ctx.fillRect(ex - fw, ey - 0.6, fw * 2, 1.2);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(ex - 3, ey - 1, 6, 2);
+      ctx.restore();
+      drawGlow(ctx, ex, ey, 14, "210,200,255", 0.8);
+    }
+    if (!this.paused && Math.random() < 0.35) this.fx.add({ k: "mote", x: f.x + (Math.random() - 0.5) * 24, y: this.groundY - 10 - Math.random() * 90, vx: -20 - Math.random() * 30, vy: -8, max: 0.7, size: 1, rgb: "200,190,255" });
     if (f.overdrive > 0.05) drawGlow(ctx, fx, this.groundY - 40, 50, FAM_RGB.momentum!, f.overdrive * 0.6);
     if (f.guaranteedCrits > 0) drawGlow(ctx, fx + 30, this.groundY - 64, 22, FAM_RGB.precision!, 0.5 + Math.sin(this.time * 10) * 0.2);
     if (this.slotFlash[0]! > 0) drawGlow(ctx, fx + 30, this.groundY - 52, 46, "239,233,220", this.slotFlash[0]! * 0.35);
@@ -825,13 +971,13 @@ export class FightView {
     ctx.translate(x - 1.4, y - 1.7);
     ctx.scale(-s, s);
     ctx.rotate(rot);
-    drawEnemyShape(ctx, e, this.time + e.id, e.elite ? "#d9d0ff" : SLATE_RIM, walking);
+    drawEnemyShape(ctx, e, this.time + e.id, e.elite ? "#e4dcff" : VOID_RIM, walking);
     ctx.restore();
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(-s, s);
     ctx.rotate(rot);
-    drawEnemyShape(ctx, e, this.time + e.id, e.flashT > 0 ? flashColor(e.flashT / 0.12) : SLATE, walking);
+    drawEnemyShape(ctx, e, this.time + e.id, e.flashT > 0 ? flashColor(e.flashT / 0.12) : VOID, walking);
     ctx.restore();
     // eye glint
     if (eyeOut.ok && !dead) {
@@ -908,8 +1054,8 @@ export class FightView {
     ctx.translate(x, y);
     ctx.scale(-sc, sc);
     const flash = e.flashT > 0.05;
-    if (isDup) drawInkFigure(ctx, rig, { form, time: this.time, speed: 40, smearColor: "rgba(160,130,255,0.9)" }, flash ? "#ffffff" : "#d8d0e8", "#1a1030");
-    else drawInkFigure(ctx, rig, { form, time: this.time, speed: 40, smearColor: "rgba(255,236,180,0.95)" }, flash ? "#ffffff" : "#fff3d2", "#5a4520");
+    if (isDup) drawInkFigure(ctx, rig, { form, time: this.time, speed: 40, smearColor: "rgba(160,130,255,0.9)", outfit: this.outfit }, flash ? "#ffffff" : "#2c2838", "#a090ff");
+    else drawInkFigure(ctx, rig, { form, time: this.time, speed: 40, smearColor: "rgba(255,236,180,0.95)", outfit: "cloak", prop: "halo" }, flash ? "#ffffff" : "#fff3d2", "#5a4520");
     ctx.restore();
     ctx.globalAlpha = 1;
     if (e.stunT > 0 || e.staggerT > 0.2) {
@@ -940,7 +1086,7 @@ export class FightView {
 function flashColor(k: number): string {
   const t = Math.max(0, Math.min(1, k));
   const c = (a: number, b: number) => Math.round(a + (b - a) * t);
-  return `rgb(${c(38, 120)},${c(42, 126)},${c(52, 142)})`;
+  return `rgb(${c(6, 70)},${c(5, 60)},${c(12, 110)})`;
 }
 
 function desat(rgb: string): string {

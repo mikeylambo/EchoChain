@@ -1,6 +1,6 @@
 /**
  * Controller support: maps a standard gamepad onto the same keyboard handlers the game already uses,
- * plus spatial focus navigation for menus. A = confirm / Sync Break, B = back, Start = pause,
+ * plus spatial focus navigation for menus. A = confirm / Resound, B = back, Start = pause,
  * X = auto-arrange, Y = formation, LB/RB = battle speed.
  */
 const prev: boolean[] = [];

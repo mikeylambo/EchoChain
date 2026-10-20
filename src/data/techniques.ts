@@ -312,7 +312,7 @@ export const TECHNIQUES: TechniqueDef[] = [
   },
   {
     id: "harvest", num: 23, name: "Harvest", family: "resonance", receives: ["KILL"], emits: ["KILL"],
-    scaling: "per-event", starter: false, desc: "+8% Sync Break charge", rank3: "+15%",
+    scaling: "per-event", starter: false, desc: "+8% Resound charge", rank3: "+15%",
     act(c, [ev]) {
       c.addCharge(r3(c) ? 0.15 : 0.08);
       c.emit("KILL", ev?.targetId ?? -1);

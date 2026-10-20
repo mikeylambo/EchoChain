@@ -46,6 +46,7 @@ export class Game {
     const s = this.profile.settings;
     audio.setVolumes(s.master, s.music, s.sfx);
     this.view.settings = { reducedFlash: s.reducedFlash, reducedShake: s.reducedShake, numbers: s.numbers };
+    this.view.outfit = s.outfit ?? "coat";
   }
 
   frame(now: number): void {
@@ -120,7 +121,7 @@ export class Game {
       this.backdrop("camp");
       audio.setMusic("map");
       const cards = makeOpeningDraft(run);
-      const i = await draftScreen(cards, run, { kicker: "Your first echo", title: "Choose a Technique", sub: `It will follow behind your ${FORMS[run.form].name}, replaying your strikes — and reacting to them.` });
+      const i = await draftScreen(cards, run, {});
       run.choices.push({ t: "draft", i });
       applyCard(run, cards[i]!);
       this.saveRun();
@@ -147,7 +148,7 @@ export class Game {
       } else if (node.type === "rest") {
         const heal = await restScreen(run);
         rest(run, heal);
-        if (!heal) await this.sealDraft(run, "Rest", "Take a Seal");
+        if (!heal) await this.sealDraft(run, "Seal", "");
       } else {
         const res = await this.fight(run, node);
         if (res === "quit") { unmount(); return "quit"; }
@@ -167,11 +168,11 @@ export class Game {
     this.backdrop("camp");
     audio.setMusic("map");
     const banners: string[] = [];
-    if (reward.actCleared) banners.push(`Act ${ROMAN[reward.actCleared]} cleared`);
-    if (reward.slotGained) banners.push("+1 echo slot");
+    if (reward.actCleared) banners.push(ROMAN[reward.actCleared]!);
+    if (reward.slotGained) banners.push("+1 slot");
     const cards = makeDraft(run);
     if (cards.length) {
-      const i = await draftScreen(cards, run, { title: "Claim a Technique", banner: banners.join(" · ") || undefined });
+      const i = await draftScreen(cards, run, { banner: banners.join(" · ") || undefined });
       run.choices.push({ t: "draft", i });
       applyCard(run, cards[i]!);
       const c = cards[i]!;
@@ -179,7 +180,7 @@ export class Game {
       if (c.kind === "seal") toast(`Seal · ${SEAL[c.seal]!.name}`);
     }
     if (run.pendingEcho) placePending(run, await placeScreen(run));
-    if (reward.sealDraft) await this.sealDraft(run, `Act ${ROMAN[reward.actCleared]} cleared`, "Choose a Seal");
+    if (reward.sealDraft) await this.sealDraft(run, "Seal", "");
     betweenFights(run);
     this.backdrop("camp");
     await arrangeScreen(run);
@@ -203,6 +204,7 @@ export class Game {
     v.paused = false;
     v.speed = this.profile.settings.speed;
     v.tutorial = !this.profile.seenTutorial;
+    if (run.fightIndex === 0 && run.mode === "standard") v.introT = 2.4;
     this.fightWorld = w;
     const [label] = nodeInfo(node);
     const where = run.mode === "endless" ? `Depth ${run.endlessDepth + 1} · ${label}` : `Act ${ROMAN[run.act]} · ${label}`;
@@ -219,7 +221,7 @@ export class Game {
     audio.setAct(act);
     audio.setMusic(node.type === "boss" ? "boss" : "fight", Math.min(5, run.trail.length));
     if (node.type === "boss" && node.plan?.boss) { v.banner(BOSSES[node.plan.boss].name.toUpperCase()); audio.boss("intro"); }
-    else if (node.type === "elite") v.banner("ELITE · TWIN LANCER");
+    else if (node.type === "elite") v.banner("TWIN LANCER");
     else if (run.fightIndex === 0) v.banner(THEMES[act - 1]!.name.toUpperCase());
 
     return new Promise((resolve) => {
@@ -266,7 +268,7 @@ export class Game {
               if (big) audio.victory(); else audio.ui("confirm");
               if (!this.profile.seenTutorial) { this.profile.seenTutorial = true; saveProfile(this.profile); }
             } else {
-              v.banner("THE LINE BREAKS");
+              v.banner("FALLEN");
               audio.defeat();
             }
           }

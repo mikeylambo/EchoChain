@@ -35,16 +35,16 @@ export interface SealDef {
 }
 
 export const SEALS: SealDef[] = [
-  { id: "longline", name: "Long Line", desc: "+1 echo slot (max 7)", glyph: "⟶", mods: { extraSlots: 1 } },
-  { id: "tight", name: "Tight Formation", desc: "Echo delay −35%", glyph: "≡", mods: { delayMult: 0.65 } },
+  { id: "longline", name: "Long Line", desc: "+1 slot", glyph: "⟶", mods: { extraSlots: 1 } },
+  { id: "tight", name: "Tight Formation", desc: "Echoes march closer", glyph: "≡", mods: { delayMult: 0.65 } },
   { id: "quick", name: "Quick Hands", desc: "Echo cooldown −30%", glyph: "≫", mods: { cdMult: 0.7 } },
-  { id: "overflow", name: "Overflow", desc: "Dropped events still charge Sync Break", glyph: "◌", mods: { overflow: true } },
-  { id: "firstlight", name: "First Light", desc: "Slot 1 output +50%", glyph: "①", mods: { firstLight: 1.5 } },
-  { id: "tailwind", name: "Tailwind", desc: "Last slot output +60%", glyph: "⇥", mods: { tailwind: 1.6 } },
-  { id: "iron", name: "Iron Body", desc: "+30 max HP, heal 30", glyph: "▣", mods: { maxHpBonus: 30 }, healOnPick: 30 },
-  { id: "resonant", name: "Resonant Core", desc: "Sync Break charges 25% faster", glyph: "◎", mods: { chargeMult: 1.25 } },
-  { id: "afterglow", name: "Afterglow", desc: "Echoes deal 10% again 0.5s later", glyph: "∿", mods: { afterglow: 0.1 } },
-  { id: "chaintax", name: "Chain Tax", desc: "Every 5-link chain heals 3 HP", glyph: "✚", mods: { chainTax: 3 } },
+  { id: "overflow", name: "Overflow", desc: "Missed links still charge", glyph: "◌", mods: { overflow: true } },
+  { id: "firstlight", name: "First Light", desc: "Slot 1 · +50%", glyph: "①", mods: { firstLight: 1.5 } },
+  { id: "tailwind", name: "Tailwind", desc: "Last slot · +60%", glyph: "⇥", mods: { tailwind: 1.6 } },
+  { id: "iron", name: "Iron Body", desc: "+30 HP", glyph: "▣", mods: { maxHpBonus: 30 }, healOnPick: 30 },
+  { id: "resonant", name: "Resonant Core", desc: "Resound · +25% charge", glyph: "◎", mods: { chargeMult: 1.25 } },
+  { id: "afterglow", name: "Afterglow", desc: "Hits echo again · 10%", glyph: "∿", mods: { afterglow: 0.1 } },
+  { id: "chaintax", name: "Chain Tax", desc: "×5 chain · heal 3", glyph: "✚", mods: { chainTax: 3 } },
 ];
 
 export const SEAL: Record<string, SealDef> = Object.fromEntries(SEALS.map((s) => [s.id, s]));
