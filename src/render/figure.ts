@@ -121,7 +121,8 @@ function hurt(t: number): Rig {
 
 function dash(t: number): Rig {
   const r = walk(t, 2.6);
-  return { ...r, lean: 0.68, aFu: 1.15, aFl: 0.05, aBu: -1.3, aBl: 0.3, weapon: 0.08, weaponB: 2.95, crouch: 7, lFu: r.lFu * 1.4, lBu: r.lBu * 1.4 };
+  // Kingdom Hearts dash: blade stays cocked over the shoulder, body low and driving, free arm streaming back
+  return { ...r, lean: 0.78, aFu: 0.05, aFl: 2.55, aBu: -1.45, aBl: 0.25, weapon: -2.05, weaponB: 2.95, crouch: 10, lFu: r.lFu * 1.5, lBu: r.lBu * 1.5 };
 }
 
 function run(t: number): Rig {
@@ -216,7 +217,23 @@ export interface FigureLook {
   prop?: Prop;
 }
 
-const UP = 19, LOW = 18, THIGH = 20, SHIN = 19, TORSO = 30;
+const UP0 = 19, LOW0 = 18, THIGH0 = 20, SHIN0 = 19, TORSO0 = 30;
+
+/** Per-form proportions: the Duelist tall and lean, the Brawler broad and grounded, the Phantom slight and hunched. */
+interface Build { leg: number; arm: number; torso: number; bulk: number; hunch: number; head: number }
+const BUILDS: Record<string, Build> = {
+  duelist: { leg: 1.1, arm: 1.06, torso: 1.06, bulk: 0.94, hunch: 0, head: 0.92 },
+  brawler: { leg: 0.94, arm: 1.08, torso: 1.0, bulk: 1.42, hunch: 0.06, head: 1.0 },
+  phantom: { leg: 1.04, arm: 1.12, torso: 0.94, bulk: 0.8, hunch: 0.2, head: 0.95 },
+  duplicate: { leg: 1.1, arm: 1.06, torso: 1.06, bulk: 0.94, hunch: 0.1, head: 0.92 },
+  original: { leg: 1.14, arm: 1.08, torso: 1.1, bulk: 1, hunch: -0.04, head: 0.9 },
+};
+let UP = UP0, LOW = LOW0, THIGH = THIGH0, SHIN = SHIN0, TORSO = TORSO0, HEAD = 1, HUNCH = 0;
+function applyBuild(form: string): Build {
+  const b = BUILDS[form] ?? BUILDS.duelist!;
+  UP = UP0 * b.arm; LOW = LOW0 * b.arm; THIGH = THIGH0 * b.leg; SHIN = SHIN0 * b.leg; TORSO = TORSO0 * b.torso; HEAD = b.head; HUNCH = b.hunch;
+  return b;
+}
 
 function seg(x: number, y: number, a: number, l: number): [number, number] {
   return [x + Math.sin(a) * l, y + Math.cos(a) * l];
@@ -228,7 +245,8 @@ function seg(x: number, y: number, a: number, l: number): [number, number] {
  */
 export function drawSilhouette(ctx: CanvasRenderingContext2D, r: Rig, look: FigureLook): void {
   const form = look.form;
-  const bulk = form === "brawler" ? 1.28 : form === "phantom" ? 0.86 : 1;
+  const bulk = applyBuild(form).bulk;
+  r = { ...r, lean: r.lean + HUNCH };
   const hipY = -(THIGH + SHIN) * 0.96 + r.bob + r.crouch;
   const hx = 0;
   // legs
@@ -305,7 +323,7 @@ export function drawSilhouette(ctx: CanvasRenderingContext2D, r: Rig, look: Figu
     ctx.closePath();
     ctx.fill();
   } else {
-    circle(ctx, hdx, hdy, form === "brawler" ? 8 : 7.2);
+    circle(ctx, hdx, hdy, (form === "brawler" ? 8 : 7.2) * HEAD);
     if (form === "duelist" || form === "duplicate" || form === "original") {
       // topknot
       ctx.beginPath();
@@ -581,7 +599,9 @@ export function drawInkFigure(ctx: CanvasRenderingContext2D, r: Rig, look: Figur
 }
 
 /** Head centre in rig space (for eyes / halos drawn outside the silhouette). */
-export function headOf(r: Rig): [number, number] {
+export function headOf(r: Rig, form = "duelist"): [number, number] {
+  applyBuild(form);
+  r = { ...r, lean: r.lean + HUNCH };
   const hipY = -(THIGH + SHIN) * 0.96 + r.bob + r.crouch;
   const nx = Math.sin(r.lean) * TORSO, ny = hipY - Math.cos(r.lean) * TORSO;
   return [nx + Math.sin(r.lean) * 9.5, ny - Math.cos(r.lean) * 9.5];

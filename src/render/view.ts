@@ -765,7 +765,7 @@ export class FightView {
         this.fx.add({ k: "mote", x: this.slotX(j) + (Math.random() - 0.5) * 30, y: y - 10 - Math.random() * 95, vx: -25 - Math.random() * 60, vy: -6 - Math.random() * 18, max: 0.6 + Math.random() * 0.9, size: 0.8 + Math.random() * 1.6, rgb });
       }
       // eyes
-      const [hx, hy] = headOf(rig);
+      const [hx, hy] = headOf(rig, w.form.id);
       drawGlow(ctx, x + (hx + 3) * FIG, y + (hy - 1) * FIG, 10 + fl * 10, rgb, 0.7 + fl * 0.3);
     }
     this.echoMul = 1;
@@ -820,7 +820,7 @@ export class FightView {
     ctx.restore();
     // eye slit + horizontal flare
     {
-      const [hx, hy] = headOf(rig);
+      const [hx, hy] = headOf(rig, w.form.id);
       const ex = fx + (hx + 3.5) * FIG, ey = this.groundY + (hy - 1) * FIG;
       const fw = 120 + this.syncGlow * 200;
       ctx.save();
