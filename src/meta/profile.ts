@@ -40,7 +40,7 @@ export interface Profile {
 
 const KEY = "echochain.profile.v1";
 
-export const DEFAULT_SETTINGS: Settings = { master: 0.8, music: 0.6, sfx: 0.8, speed: 1, reducedFlash: false, reducedShake: false, numbers: true, outfit: "coat" };
+export const DEFAULT_SETTINGS: Settings = { master: 0.8, music: 0.6, sfx: 0.8, speed: 1, reducedFlash: false, reducedShake: false, numbers: true, outfit: "cloak" };
 
 export function freshProfile(): Profile {
   return {
@@ -59,6 +59,9 @@ export function loadProfile(): Profile {
     merged.techs = [...new Set([...STARTER_TECHS, ...(merged.techs ?? [])])].filter((t) => TECH[t]);
     merged.forms = (merged.forms ?? ["duelist"]).filter((f) => FORM_LIST.includes(f));
     if (!merged.forms.includes("duelist")) merged.forms.unshift("duelist");
+    // v2: the cloak became the hero's default attire
+    if (!(p as { attireV?: number }).attireV) merged.settings.outfit = "cloak";
+    (merged as { attireV?: number }).attireV = 2;
     return merged;
   } catch {
     return freshProfile();

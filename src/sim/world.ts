@@ -36,6 +36,8 @@ export interface Fighter {
   overdriveCap: number;
   overdriveT: number;
   hurtT: number;
+  /** 0 walk, 1 run, 2 dash */
+  gait: number;
 }
 
 export interface FightStats {
@@ -108,7 +110,7 @@ export class World {
     this.spawnRng = streamFor(cfg.seed, "spawn");
     this.fighter = {
       x: 0, hp: cfg.hp, maxHp: cfg.maxHp, pose: "walk", poseT: 0, strikeT: 0.3,
-      guaranteedCrits: 0, overdrive: 0, overdriveCap: 0.4, overdriveT: 0, hurtT: 0,
+      guaranteedCrits: 0, overdrive: 0, overdriveCap: 0.4, overdriveT: 0, hurtT: 0, gait: 0,
     };
     this.charge = cfg.startCharge ?? 0;
     this.history.reset(0);
@@ -323,6 +325,8 @@ export class World {
     const engaged = !!t && t.x - f.x <= TUNING.strikeRange + t.size * 10;
     f.strikeT = Math.max(0, f.strikeT - DT * (1 + f.overdrive));
     if (engaged) {
+      // Dash-in strike: arriving at speed takes the initiative.
+      if (f.gait > 0) { f.strikeT = 0; f.gait = 0; }
       if (f.strikeT <= 0) {
         this.fighterStrike(false);
         f.strikeT = this.form.interval;
@@ -333,8 +337,17 @@ export class World {
     } else if (!striking) {
       // March. Don't walk past an enemy that is closer than strike range.
       const limit = t ? t.x - (TUNING.strikeRange + t.size * 10) + 1 : Infinity;
-      f.x = Math.min(limit, f.x + TUNING.marchSpeed * DT);
-      if (f.pose !== "walk") { f.pose = "walk"; f.poseT = 0; }
+      // Gait ladder: walk → run → dash, by distance to the next enemy (hysteresis keeps it from flickering).
+      const G = TUNING.gait;
+      const gap = t ? limit - f.x : 0;
+      const up = f.gait === 0 ? gap > G.runGap + G.hyst : f.gait === 1 ? gap > G.dashGap + G.hyst : false;
+      const down = f.gait === 2 ? gap < G.dashGap - G.hyst : f.gait === 1 ? gap < G.runGap - G.hyst : false;
+      if (up) f.gait++;
+      else if (down) f.gait--;
+      const mult = f.gait === 2 ? G.dash : f.gait === 1 ? G.run : 1;
+      f.x = Math.min(limit, f.x + TUNING.marchSpeed * mult * DT);
+      const p: Pose = f.gait === 2 ? "dash" : f.gait === 1 ? "run" : "walk";
+      if (f.pose !== p) { f.pose = p; f.poseT = 0; }
     }
   }
 

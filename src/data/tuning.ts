@@ -16,10 +16,12 @@ export const TUNING = {
   critMult: 2,
   baseCrit: 0.12,
   rankMult: [1, 1.5, 2] as const,
-  betweenFightHeal: 0.1,
+  betweenFightHeal: 0.14,
   restHeal: 0.4,
   strikeRange: 64,
   marchSpeed: 70, // px/s
+  /** gait ladder: distance to the next enemy → speed multiplier (with hysteresis) */
+  gait: { runGap: 200, dashGap: 420, run: 1.9, dash: 3.4, hyst: 30 },
   enemyGap: 30,
   hitstop: { hit: 0.04, crit: 0.08, chain5: 0.12 },
   draftWeights: { echo: 0.55, rank: 0.3, seal: 0.15 },

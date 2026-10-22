@@ -23,7 +23,7 @@ export interface Rig {
 
 const BASE: Rig = {
   lean: 0.1, bob: 0, aFu: 0.55, aFl: 0.9, aBu: -0.25, aBl: 0.5,
-  lFu: 0.28, lFl: -0.32, lBu: -0.32, lBl: -0.05, weapon: 0.55, weaponB: 2.4,
+  lFu: 0.28, lFl: -0.32, lBu: -0.32, lBl: -0.05, weapon: -0.55, weaponB: 2.4,
   smear: 0, smearFrom: 0, smearTo: 0, crouch: 0,
 };
 
@@ -54,11 +54,12 @@ function walk(t: number, rate = 1.25): Rig {
     lFl: -0.7 * Math.max(0, Math.sin(p + 1.7)) - 0.05,
     lBu: -0.48 * s,
     lBl: -0.7 * Math.max(0, Math.sin(p + Math.PI + 1.7)) - 0.05,
-    aFu: 0.4 - 0.32 * s,
-    aFl: 0.9,
+    // blade rests on the shoulder: reads against the sky, never against the cloak
+    aFu: 0.35 + 0.05 * s,
+    aFl: 2.25,
     aBu: -0.1 + 0.36 * s,
     aBl: 0.7,
-    weapon: 0.75 - 0.25 * s,
+    weapon: -2.35 + 0.05 * s,
   };
 }
 
@@ -119,7 +120,30 @@ function hurt(t: number): Rig {
 }
 
 function dash(t: number): Rig {
-  return { ...walk(t, 2.2), lean: 0.62, aFu: -0.9, aBu: -1.1, weapon: 2.6, crouch: 5 };
+  const r = walk(t, 2.6);
+  return { ...r, lean: 0.68, aFu: 1.15, aFl: 0.05, aBu: -1.3, aBl: 0.3, weapon: 0.08, weaponB: 2.95, crouch: 7, lFu: r.lFu * 1.4, lBu: r.lBu * 1.4 };
+}
+
+function run(t: number): Rig {
+  const p = t * Math.PI * 2 * 1.75;
+  const s = Math.sin(p);
+  return {
+    ...BASE,
+    lean: 0.34,
+    bob: -Math.abs(Math.cos(p)) * 3.4,
+    lFu: 0.7 * s,
+    lFl: -1.0 * Math.max(0, Math.sin(p + 1.6)) - 0.1,
+    lBu: -0.7 * s,
+    lBl: -1.0 * Math.max(0, Math.sin(p + Math.PI + 1.6)) - 0.1,
+    // charge: blade low and forward, edge leading
+    aFu: 0.75 + 0.06 * s,
+    aFl: 0.35,
+    aBu: -0.2 + 0.7 * s,
+    aBl: 1.2,
+    weapon: 0.32,
+    weaponB: 2.85,
+    crouch: 3,
+  };
 }
 
 function victory(t: number): Rig {
@@ -165,6 +189,7 @@ export function rigFor(pose: ExtraPose, t: number, walkRate = 1.25): Rig {
     case "parry": return parry(t);
     case "hurt": return hurt(t);
     case "dash": return dash(t);
+    case "run": return run(t);
     case "victory": return victory(t);
     case "uppercut": return uppercut(t);
     case "spike": return spike(t);
@@ -360,7 +385,7 @@ function drawProp(ctx: CanvasRenderingContext2D, p: Prop, wx: number, wy: number
       break;
     }
     case "halo": {
-      blade(ctx, wx, wy, a, len, 3.1); tsuba();
+      katana(ctx, wx, wy, a, len);
       ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.ellipse(hx - 2, hy - 15, 11, 3.4, -0.15, 0, Math.PI * 2); ctx.stroke();
       break;
@@ -390,7 +415,7 @@ function drawProp(ctx: CanvasRenderingContext2D, p: Prop, wx: number, wy: number
       ctx.beginPath(); ctx.moveTo(wx, wy); ctx.arc(wx, wy, 22, a - 0.7, a + 0.7); ctx.closePath(); ctx.fill();
       break;
     }
-    default: blade(ctx, wx, wy, a, len, 3.1); tsuba();
+    default: katana(ctx, wx, wy, a, len);
   }
 }
 
@@ -486,6 +511,44 @@ function line(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number,
 function circle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number): void {
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/** Curved katana: grip behind the hand, a real guard, a blade that widens then tapers with a slight sori. */
+function katana(ctx: CanvasRenderingContext2D, x: number, y: number, a: number, len: number): void {
+  const dx = Math.cos(a), dy = Math.sin(a);
+  const nx = -dy, ny = dx;
+  // grip (tsuka)
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = "round";
+  line(ctx, x - dx * 11, y - dy * 11, x + dx * 2, y + dy * 2);
+  // guard (tsuba)
+  ctx.beginPath();
+  ctx.ellipse(x + dx * 3, y + dy * 3, 2.2, 5.2, a, 0, Math.PI * 2);
+  ctx.fill();
+  // blade with curvature toward the spine
+  const L = len + 6;
+  const curve = L * 0.07;
+  const pt = (u: number, side: number, w: number) => {
+    const c = curve * u * u;
+    return [x + dx * (5 + u * L) - nx * c + nx * side * w, y + dy * (5 + u * L) - ny * c + ny * side * w] as const;
+  };
+  ctx.beginPath();
+  const N = 8;
+  for (let i = 0; i <= N; i++) {
+    const u = i / N;
+    const [px, py] = pt(u, 1, 2.0 * (1 - u * 0.45));
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  const [tx, ty] = pt(1.08, -0.6, 2);
+  ctx.lineTo(tx, ty);
+  for (let i = N; i >= 0; i--) {
+    const u = i / N;
+    const [px, py] = pt(u, -1, 1.6 * (1 - u * 0.35));
+    ctx.lineTo(px, py);
+  }
+  ctx.closePath();
   ctx.fill();
 }
 

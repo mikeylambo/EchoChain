@@ -24,7 +24,7 @@ export interface Packet {
   sync?: boolean;
 }
 
-export type Pose = "idle" | "walk" | "strike" | "heavy" | "parry" | "hurt" | "dash" | "victory";
+export type Pose = "idle" | "walk" | "run" | "strike" | "heavy" | "parry" | "hurt" | "dash" | "victory";
 
 export interface FighterSample {
   x: number;

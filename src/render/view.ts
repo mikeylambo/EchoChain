@@ -97,7 +97,7 @@ export class FightView {
   paused = false;
   attract = false;
   /** Hero attire (settings). */
-  outfit: Outfit = "coat";
+  outfit: Outfit = "cloak";
   tutorial = false;
   /** Sync command ticks issued this fight (for the run's choice log). */
   syncTicks: number[] = [];
@@ -776,7 +776,27 @@ export class FightView {
     const pose = kneel ? "heavy" : this.syncGlow > 0 && this.syncFreeze > 0 ? "parry" : f.pose;
     const rig = rigFor(pose, kneel ? 0.22 : f.poseT);
     const hurt = f.hurtT > 0.15;
-    const hlook: FigureLook = { form: w.form.id, time: this.time, speed: f.pose === "walk" ? 70 : 10, outfit: this.outfit };
+    // gait: dark afterimages + speed lines when he runs or dashes
+    if (f.gait > 0 && !kneel) {
+      const n = f.gait === 2 ? 4 : 2;
+      for (let k = n; k >= 1; k--) {
+        ctx.save();
+        ctx.translate(fx - k * (f.gait === 2 ? 22 : 12), this.groundY);
+        ctx.scale(FIG, FIG);
+        ctx.globalAlpha = (f.gait === 2 ? 0.22 : 0.14) * (1 - k / (n + 1));
+        ctx.fillStyle = ctx.strokeStyle = "#8a7cff";
+        drawSilhouette(ctx, rigFor(pose, Math.max(0, f.poseT - k * 0.03)), { form: w.form.id, time: this.time - k * 0.03, speed: 140, outfit: this.outfit });
+        ctx.restore();
+      }
+      if (!this.paused && Math.random() < (f.gait === 2 ? 0.9 : 0.35)) {
+        this.fx.add({ k: "streak", x: f.x - 10, y: this.groundY - 15 - Math.random() * 90, x1: f.x + 50 + Math.random() * 40, y1: 0, rgb: "190,180,255", size: 1, max: 0.22 });
+        const last = this.fx.ps[this.fx.ps.length - 1]!;
+        last.y1 = last.y;
+        last.vx = -500;
+      }
+      if (f.gait === 2 && !this.paused && Math.random() < 0.4) this.fx.dust(f.x - 10, this.groundY, 1, "160,150,230");
+    }
+    const hlook: FigureLook = { form: w.form.id, time: this.time, speed: f.gait === 2 ? 190 : f.gait === 1 ? 120 : f.pose === "walk" ? 70 : 10, outfit: this.outfit };
     ctx.save();
     ctx.translate(fx, this.groundY);
     ctx.scale(FIG, FIG);
